@@ -9,8 +9,8 @@ struct Name {
 
 
 add(a: int, b: int) {
-    c: byte = "hello world\n"
-    d: byte = "tomato\n"
+    c: byte* = "hello world\n"
+    d: byte* = "tomato\n"
 
     loop a > 0 {
         cond {
@@ -18,7 +18,7 @@ add(a: int, b: int) {
                 #asm(gcc_x64) {
                     "{space}mov $1, %eax"
                     "{space}mov $1, %edi"
-                    "{space}lea ${c}(%rip), %rsi"
+                    "{space}lea ${c}, %rsi"
                     "{space}mov $12, %edx"
                     "{space}syscall"
                 }
@@ -27,7 +27,7 @@ add(a: int, b: int) {
                 #asm(gcc_x64) {
                     "{space}mov $1, %eax"
                     "{space}mov $1, %edi"
-                    "{space}lea ${d}(%rip), %rsi"
+                    "{space}lea ${d}, %rsi"
                     "{space}mov $7, %edx"
                     "{space}syscall"
                 }

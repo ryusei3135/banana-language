@@ -29,8 +29,8 @@ struct CharOpt {
 
 #[repr(C)]
 union V {
-    pub ok: char,
-    pub err: *const char
+    pub ok: u8,
+    pub err: *const u8
 }
 
 #[repr(C)]
@@ -40,10 +40,10 @@ struct CharResult {
 }
 
 impl CharResult {
-    fn get_result_ok_value(&self) -> Result<char, *const char> {
+    fn get_result_ok_value(&self) -> Result<char, *const u8> {
         unsafe {
             if matches!(self.kind, ResultKind::Ok) {
-                return Ok(self.value.ok);
+                return Ok(self.value.ok as char);
             } else {
                 return Err(self.value.err);
             }
@@ -212,10 +212,11 @@ impl Parser {
 
     fn parse_atom(&mut self) -> Result<Node, RegexError> {
         unsafe {
-            if matches!(bump(self).kind, OpKind::NONE) {
+            let c0 = bump(self);
+            if matches!(c0.kind, OpKind::NONE) {
                 return Err(RegexError("パターンが予期せず終了しました".into()));
             }
-            match peek(self).value {
+            match c0.value {
                 b'(' => {
                     let mut capturing = true;
                     if IsBoolean!(match_chr(self, b'?'))
@@ -251,10 +252,6 @@ impl Parser {
 
     fn parse_escape(&mut self) -> Result<Node, RegexError> {
         unsafe {
-            if matches!(bump(self).kind, OpKind::NONE) {
-                return Err(RegexError("末尾がバックスラッシュで終わっています".into()));
-            }
-
             // エスケープされる文字
             if matches!(peek(self).kind, OpKind::NONE) {
                 return Err(RegexError(
@@ -315,10 +312,11 @@ impl Parser {
                     && matches!(peek2(self).kind, OpKind::SOME)
                     && matches!(peek2(self).value, b'd' | b'w' | b's')
                 {
-                    bump(self);
-                    let kind: u8 = 
-                        if matches!(bump(self).kind, OpKind::SOME) {
-                            peek(self).value
+                    bump(self); // '\\' を消費
+                    let bumped = bump(self); // d/w/s を消費し、その値を取得
+                    let kind: u8 =
+                        if matches!(bumped.kind, OpKind::SOME) {
+                            bumped.value
                         } else {
                             panic!()
                         };

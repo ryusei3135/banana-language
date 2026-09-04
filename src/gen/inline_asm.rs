@@ -30,14 +30,79 @@ impl AsmEmitter {
         (0..self.asm_fmt.reg_count()).find(|reg| !used.contains(reg) && !exclude.contains(reg))
     }
 
+    /// 渡されたノードが変数(`AssignVar`/`Param`)をレジスタとして
+    /// 参照するオペランドである場合、その変数自身の型のサイズを返す。
+    /// (インラインアセンブラのdstオペランドのサイズを求めるために使う。
+    ///  `Pointer`/`GetAddress`でラップされている場合は、その内側を
+    ///  辿って判定する)
+    fn resolve_operand_var_size(&self, node_idx: &usize) -> Option<Size> {
+        match self.curr_inst[*node_idx].clone() {
+            inst::Inst::AssignVar { name, .. } => {
+                self.var_hash_map.get(&name).map(|v| v.size.clone())
+            }
+            inst::Inst::Param(param) => {
+                self.var_hash_map.get(&param.name).map(|v| v.size.clone())
+            }
+            inst::Inst::Pointer(inner) | inst::Inst::GetAddress(inner) => {
+                self.resolve_operand_var_size(&inner)
+            }
+            _ => None,
+        }
+    }
+
+    /// `extract_operand_text`と同様にオペランドの文字列を組み立てるが、
+    /// レジスタとして参照される変数(`AssignVar`/`Param`)の場合、
+    /// その変数自身のサイズではなく`forced_size`を優先して使う。
+    ///
+    /// インラインアセンブラでは、`mov {0}, {1}`のように異なる変数を
+    /// 組み合わせて書くことがあるが、AT&T記法では`mov`などの
+    /// オペランドは同じ幅のレジスタでなければ正しいアセンブリに
+    /// ならない。そのため、srcのレジスタサイズは常にdstのレジスタ
+    /// サイズに合わせて上書きする必要がある
+    /// (ポインタ型の変数は、常にアドレス=64bitとして扱われるため
+    ///  この上書きの対象外)
+    fn extract_operand_text_sized(
+        &mut self,
+        node_idx: &usize,
+        in_self_ptr: bool,
+        forced_size: &Size,
+    ) -> String {
+        match self.curr_inst[*node_idx].clone() {
+            inst::Inst::AssignVar { name, .. } => {
+                let var_info = self.var_hash_map.get(&name).unwrap();
+                let size = if var_info.size.is_pointer().is_some() {
+                    Size::DQ
+                } else {
+                    forced_size.clone()
+                };
+                self.asm_fmt.get_fmt_reg(&var_info.reg, &size)
+            }
+            inst::Inst::Param(param) => {
+                let var_info = self.var_hash_map.get(&param.name).unwrap();
+                if let Some(ty) = var_info.size.is_pointer() {
+                    let reg = self.asm_fmt.get_fmt_reg(&var_info.reg, &Size::DQ);
+                    self.asm_fmt.fmt_ref_operand(&reg, &ty.to_bytes())
+                } else {
+                    self.asm_fmt.get_fmt_reg(&var_info.reg, forced_size)
+                }
+            }
+            // それ以外(メモリ参照/即値/ポインタなど)は、サイズの
+            // 上書きを行わず通常通り組み立てる
+            _ => self.extract_operand_text(node_idx, in_self_ptr),
+        }
+    }
+
     /// inlineアセンブラのブロックを、実際のアセンブリテキストとして
     /// `self.asm_text`に書き出す。
     ///
     /// `lines`の各要素は`(プレースホルダー入りの行, オペランドのidx)`。
-    /// オペランドは変数・構造体のメンバー・ポインタの参照/アドレス取得
-    /// などを表すIRノードのidxで、通常の式と同じ`extract_operand_text`
-    /// を使ってオペランドの文字列(レジスタ名やメモリ参照など)へ変換し、
-    /// `{0}`, `{1}`, ... の出現順に埋め込む。
+    /// `${var}`のような記述は、パーサー側(preproc.rs)の時点で既に
+    /// `{0}`, `{1}`, ... の出現順のプレースホルダーへ変換済みで、
+    /// 対応する式は`operands`(→ここでの`operand_ids`)に出現順で
+    /// 積まれている。オペランドは変数・構造体のメンバー・ポインタの
+    /// 参照/アドレス取得などを表すIRノードのidxで、通常の式と同じ
+    /// `extract_operand_text`を使ってオペランドの文字列(レジスタ名や
+    /// メモリ参照など)へ変換し、`{0}`, `{1}`, ... の出現順に埋め込む。
     pub(super) fn deploy_inline_asm(
         &mut self,
         name: &String,
@@ -96,8 +161,25 @@ impl AsmEmitter {
             for (template, operand_ids) in lines.iter() {
                 let mut asm_line = template.clone();
 
+                // AT&T記法の慣例により、最後のオペランドをdstとして扱う。
+                // srcのレジスタサイズは、常にこのdstのサイズに合わせる
+                // (dstが変数を参照していない場合は上書きしない)
+                let dst_size = operand_ids
+                    .last()
+                    .and_then(|id| self.resolve_operand_var_size(id));
+                let last_index = operand_ids.len().saturating_sub(1);
+
                 for (index, operand_id) in operand_ids.iter().enumerate() {
-                    let operand_text = self.extract_operand_text(operand_id, false);
+                    let operand_text = match (index != last_index, &dst_size) {
+                        (true, Some(size)) => {
+                            self.extract_operand_text_sized(operand_id, false, size)
+                        }
+                        _ => self.extract_operand_text(operand_id, false),
+                    };
+                    // `{0}`, `{1}`, ... という数字のプレースホルダーを置換
+                    // (`${var}`はパーサー側(preproc.rs)の時点で既に
+                    //  `{index}`へ変換済みのため、ここでは数字の
+                    //  プレースホルダーだけを見れば良い)
                     asm_line = asm_line.replace(&format!("{{{}}}", index), &operand_text);
                 }
 

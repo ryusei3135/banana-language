@@ -85,8 +85,19 @@ impl AsmEmitter {
             return;
         }
 
-        if self.data_map.iter().find(|v| &v.0 == src).is_some() {
-            // 子のノードがstaticりょいきの値なので、変数名だけ登録する
+        if size.is_pointer().is_none() && self.data_map.iter().find(|v| &v.0 == src).is_some() {
+            // 子のノードがstatic領域の値で、かつ宣言先の型がポインタで
+            // ない場合のみ、変数名だけを登録する(この場合は変数の
+            // 実体が静的領域そのものであり、レジスタへ値をロード
+            // する必要がないため)。
+            //
+            // 以前はここがポインタ型かどうかを見ていなかったため、
+            // `c: byte* = "hello world"`のように文字列リテラルを
+            // ポインタ型の変数へ代入した場合も、この分岐に入って
+            // しまい、文字列のアドレスをレジスタへロードする命令が
+            // 一切出力されず、`c`がポインタとして扱われなかった
+            // (`c`を参照する箇所が、値の入っていないレジスタを
+            //  読んでしまう不具合になっていた)
             self.insert_var_info(
                 &name.as_ref().unwrap(),
                 asm_emitter::VarIndexInfo::new(&self.reg_idx, &size, dst),
@@ -115,6 +126,13 @@ impl AsmEmitter {
                 self.asm_fmt.fmt_mnemonic_resize("mov", &text, &Size::DQ)
             } else {
                 // メモリのポインタか、値かで、ニーモニックが変わる
+                //
+                // `c: byte* = "hello world"`のように、文字列リテラル
+                // (静的領域に置かれたデータ)のアドレスをポインタ型の
+                // 変数へ束縛する場合もここを通る。`size.is_pointer()`
+                // が`Some`であれば、srcがdata_map上の値であっても
+                // 常に`address`(=`lea`)を使い、実際にそのアドレスを
+                // レジスタへ計算して書き込む
                 let mnemonic = if size.is_pointer().is_some() {
                     // ポインタの場合
                     "address"

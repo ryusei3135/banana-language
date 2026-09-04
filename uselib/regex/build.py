@@ -5,7 +5,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent
 SRC_C = ROOT / "c"
 BUILD = ROOT
-SRC_A = ROOT / "asm/x64" if sys.argv[2] == "x64" else "asm/arm64"
+SRC_A = ROOT / "asm" / "x64" if sys.argv[1] == "x64" else ROOT / "asm" / "arm64"
 
 BUILD.mkdir(exist_ok=True)
 

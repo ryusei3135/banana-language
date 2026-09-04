@@ -5,22 +5,35 @@ use super::*;
 impl AsmEmitter {
     pub(super) fn param_ref(&mut self, param_name: &String) -> String {
         let var_info = self.var_hash_map.get(&param_name.to_string()).unwrap();
-        let reg = self.asm_fmt.get_fmt_reg(&var_info.reg, &Size::DQ);  // ← 常に4byte(DQ)決め打ち
 
         if let Some(ty) = var_info.size.is_pointer() {
+            // ポインタ型はアドレス(常に8byte)を保持するため、
+            // 64bitレジスタ(`%rcx`など)を経由してメモリを参照する
+            let reg = self.asm_fmt.get_fmt_reg(&var_info.reg, &Size::DQ);
             self.asm_fmt.fmt_ref_operand(&reg, &ty.to_bytes())
         } else {
-            reg
+            // ポインタでなければ、変数自身の型のサイズをそのまま使う
+            // (以前はここが常にDQ(64bit)決め打ちになっており、
+            //  例えば`int`型の引数でも`%rcx`のような64bitレジスタ
+            //  として参照されてしまっていた)
+            self.asm_fmt.get_fmt_reg(&var_info.reg, &var_info.size)
         }
     }
 
     pub(super) fn string_mem_ref(&mut self, parent_id: &usize) -> String {
-        self.data_map
+        let label = self
+            .data_map
             .iter()
             .find(|v| &v.0 == parent_id)
             .unwrap()
             .1
-            .clone()
+            .clone();
+        // 文字列リテラルは静的領域(データセクション)に置かれるため、
+        // 他の静的変数と同様に`%rip`相対でアドレッシングする
+        // (以前はラベル名をそのまま返していたため、`lea`でアドレスを
+        //  計算する際に`lea Msg, %rax`のような不正なアドレッシングに
+        //  なっていた)
+        self.asm_fmt.fmt_static_var_rip(&label)
     }
 
     /// 配列に値を代入するコードを生成
@@ -122,17 +135,33 @@ impl AsmEmitter {
         //  `Pointer`を通ってこの関数まで辿り着くため、ここで
         //  正しいレジスタ幅を選ばないと`(%ecx)`のような不正な
         //  間接参照になってしまう)
-        let (reg_num, is_ptr) = (var.reg, var.size.is_pointer().is_some());
-        let size = if is_ptr { Size::DQ } else { Size::DD };
+        let (reg_num, is_ptr, var_size) =
+            (var.reg, var.size.is_pointer().is_some(), var.size.clone());
+        // ポインタなら常に64bit、そうでなければ変数自身の型のサイズを使う
+        // (以前は非ポインタの場合に常にDD(32bit)決め打ちになっており、
+        //  例えば`char`や64bitの変数でもサイズが合わなくなっていた)
+        let size = if is_ptr { Size::DQ } else { var_size };
 
-        if let Some(static_var) = self.data_map.iter().find(|v| &v.0 == src) {
-            // static領域の変数を返す:
-            //self.var_hash_map.entry(var_name.to_string()).or_insert(0);
-            static_var.1.clone()
-        } else {
-            self.reg_idx = reg_num.clone();
-            self.asm_fmt.get_fmt_reg(&reg_num, &size)
+        // ポインタ型の変数は、宣言時に必ずアドレスをレジスタへ
+        // ロードするコードが生成されている(`mov_value_ir`を参照)。
+        // そのため、初期化式がstatic領域の値(文字列リテラルなど)
+        // だったとしても、ポインタ型であればラベルを直接返さず、
+        // 必ずそのレジスタを返す必要がある。
+        //
+        // 以前はここでポインタ型かどうかを見ていなかったため、
+        // `c: byte* = "hello world"`のような変数を`${c}`のように
+        // 後から参照すると、`c`のレジスタ(例:`%rax`)ではなく、
+        // 文字列データのラベル名(例:`M0`)がそのまま返ってしまい、
+        // `${c}`が意図通りに反映されない原因になっていた
+        if !is_ptr {
+            if let Some(static_var) = self.data_map.iter().find(|v| &v.0 == src) {
+                // static領域の変数を返す:
+                return static_var.1.clone();
+            }
         }
+
+        self.reg_idx = reg_num.clone();
+        self.asm_fmt.get_fmt_reg(&reg_num, &size)
     }
 
     /// メモリを参照するコードを生成する

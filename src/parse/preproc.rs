@@ -1,5 +1,15 @@
 use super::*;
 use regex::{Captures, Regex};
+use std::sync::OnceLock;
+
+/// `${...}`を検出する正規表現。
+/// `gen_asm_line`は`#asm`ブロックの行ごとに呼ばれるため、毎回
+/// `Regex::new`でコンパイルすると無駄なコストがかかる。
+/// `OnceLock`で最初の1回だけコンパイルし、以降は使い回す。
+fn inline_var_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r"\$\{([^}]+)\}").unwrap())
+}
 
 impl Parser {
     pub(super) fn make_preproc(
@@ -125,8 +135,8 @@ impl Parser {
     /// 同じ行に複数の`${...}`があっても、すべて取り込む
     /// (以前の実装は最後の1つしか保持できなかった)。
     fn gen_asm_line(&mut self, value: &String) -> Result<node::InlineAsm, err::ErrKind> {
-        // `${...}`を検出する正規表現
-        let inline_var = Regex::new(r"\$\{([^}]+)\}").unwrap();
+        // `${...}`を検出する正規表現(最初の1回だけコンパイルし、以降は使い回す)
+        let inline_var = inline_var_regex();
 
         let mut operands = Vec::<node::Expr>::new();
         // クロージャの中では`?`が使えないので、エラーはここに一旦入れておく

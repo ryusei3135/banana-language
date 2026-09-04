@@ -201,11 +201,20 @@ impl AsmEmitter {
                     self.mem_value_ir(mem_value, this_is_self);
                 }
                 inst::Inst::Param(param) => {
+                    // 引数の実際の型のサイズを使う
+                    // (以前は常にDQ(64bit)決め打ちになっており、例えば
+                    //  `int`型の引数でも64bitレジスタとして扱われて
+                    //  いたため、後で参照する際のサイズも変数自身の
+                    //  型ではなく常に64bitになってしまっていた。
+                    //  ポインタ型は`get_fmt_reg`側で自動的に64bit
+                    //  レジスタとして扱われるため、ここで特別扱いする
+                    //  必要はない)
+                    let ty = node.get_param_ty().unwrap();
                     // 引数に使うレジスタを取得する
-                    let reg_num = self.asm_fmt.get_fmt_param::<usize>(&param.num, Size::DQ);
+                    let reg_num = self.asm_fmt.get_fmt_param::<usize>(&param.num, ty.clone());
                     self.insert_var_info(
                         &param.name,
-                        asm_emitter::VarIndexInfo::new(&reg_num, &Size::DQ, &param.dst),
+                        asm_emitter::VarIndexInfo::new(&reg_num, &ty, &param.dst),
                     );
                 }
                 inst::Inst::CallFunc(meta_data) => {

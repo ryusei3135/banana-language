@@ -10,8 +10,8 @@ def delete_line(path):
             delete_line(full_path)  # 再帰して合計
         else:
             f_name = f"{path}/{name}"
-            print(f"delete {f_name}")
             if ".o" in f_name or ".a" in f_name:
+                print(f"delete {f_name}")
                 subprocess.run([
                     "rm",
                     "-r",

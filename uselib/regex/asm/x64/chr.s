@@ -5,17 +5,15 @@
 .global is_byte_digit
 .type is_byte_digit, @function
 
-.extern peek
-.type peek, @function
+.extern bump
+.type bump, @function
 
 change_byte_chr:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
 
-    movq %rdi, (%rsp)
-
-    call peek
+    call bump               # 現在の文字を読み、同時に位置を1つ進める(この関数がエスケープ文字自体を消費する責任を持つ)
 
     
     movzbq %al, %rcx           # %raxの下位1バイト(value)を %rcx にゼロ拡張でコピー

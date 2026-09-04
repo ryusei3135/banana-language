@@ -392,11 +392,15 @@ impl AsmEmitter {
                 let var_info = self.var_hash_map.get(&name.to_string()).unwrap();
                 // ポインタ型の変数はアドレス(常に8byte)を保持するため、
                 // 32bitレジスタ(`%ecx`など)ではなく64bitレジスタ
-                // (`%rcx`など)として参照する必要がある
+                // (`%rcx`など)として参照する必要がある。
+                // ポインタでなければ、変数自身の型のサイズをそのまま使う
+                // (以前はここが常にDQ(64bit)決め打ちになっており、
+                //  例えば`int`型の変数でも`%rcx`のような64bitレジスタ
+                //  として参照されてしまっていた)
                 let size = if var_info.size.is_pointer().is_some() {
                     Size::DQ
                 } else {
-                    Size::DQ
+                    var_info.size.clone()
                 };
                 self.asm_fmt.get_fmt_reg(&var_info.reg, &size)
             }

@@ -8,19 +8,22 @@ empty:
     .byte 255, 255, 255
 .balign 4
 num:
-    .byte 0, '0', '9'
+    .byte 1
+    .byte '0', '9'
 .balign 4
 alpha:
-    .byte 3, 'a', 'z'
-    .byte 255, 'A', 'Z'
-    .byte 255, '0', '9'
-    .byte 255, '_', '_'
+    .byte 4
+    .byte 'a', 'z'
+    .byte 'A', 'Z'
+    .byte '0', '9'
+    .byte '_', '_'
 .balign 4
 space:
-    .byte 3, ' ', ' '
-    .byte 255, '\t', '\t'
-    .byte 255, '\n', '\n'
-    .byte 255, '\r', '\r'
+    .byte 4
+    .byte ' ', ' '
+    .byte '\t', '\t'
+    .byte '\n', '\n'
+    .byte '\r', '\r'
 
 .text
 .global shorthand_class_ranges
