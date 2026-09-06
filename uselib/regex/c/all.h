@@ -24,7 +24,7 @@ typedef enum ResultKind ResultKind;
 
 struct CharOpt
 {
-    char value;
+    char* value;
     OpKind kind;
 };
 
@@ -45,15 +45,11 @@ typedef enum ResultKind {
     Err,
 } ResultKind;
 
-
-typedef union NodeVal {
-    long ok;
-    char* err;
-} NodeVal;
-
-
 typedef struct NodeResult {
-    NodeVal v;
+    union {
+        long ok;
+        char* err;
+    };
     ResultKind kind;
 } NodeResult;
 
@@ -100,6 +96,10 @@ int parse_num(const char* start, const char* end);
 // asm/range.s
 char* shorthand_class_ranges(char);
 
+
+// c/result.c
+NodeResult make_ok_result(long len);
+NodeResult make_err_result(char *msg);
 
 // c/node.c
 Nodes ini_nodes();
