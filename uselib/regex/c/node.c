@@ -1,18 +1,40 @@
 #include "all.h"
 
 
-Nodes ini_nodes() {
+
+
+#ifdef _WIN32
+__declspec(dllimport)
+void ExitProcess(unsigned int);
+
+void exit_me(void)
+{
+    ExitProcess(1);
+}
+#else
+
+void sys_exit(void);
+
+void exit_me(void) {
+    sys_exit();
+}
+#endif
+
+Nodes* ini_nodes() {
     static Nodes n = {
         {0},
         0,
         0,
+        MaxLen,
     };
     n.pos = n.nodes;
-    return n;
+    return &n;
 }
 
 void push_node(Nodes *nodes, Node new_node) {
     *nodes->pos = new_node;
+    if (nodes->max_len <= nodes->len + 1)
+        exit_me();
     nodes->pos++;
     nodes->len++;
 }
@@ -32,25 +54,22 @@ long make_range_pair(Nodes *nodes, long start, long end) {
     return nodes->len-1;
 }
 
-long make_alt_node(Nodes *nodes, long range_idx) {
-    Node node = {
-        .kind = Alt,
-        .left = range_idx,
-        .right = 0,
-    };
-    push_node(nodes, node);
+
+#define MakeNode(K)\
+    Node node = {\
+        .kind = K,\
+        .left = range_idx,\
+        .right = 0,\
+    };\
+    push_node(nodes, node);\
     return nodes->len - 1;
+
+long make_alt_node(Nodes *nodes, long range_idx) {
+    MakeNode(Alt);
 }
 
-
 long make_concat_node(Nodes *nodes, long range_idx) {
-    Node node = {
-        .kind = Concat,
-        .left = range_idx,
-        .right = 0,
-    };
-    push_node(nodes, node);
-    return nodes->len - 1;
+    MakeNode(Concat);
 }
 
 long make_node(Nodes *nodes, NodeKind kind, long left, long right) {

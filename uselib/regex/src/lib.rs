@@ -37,6 +37,7 @@ pub struct Nodes {
     pub nodes: [Node; 2048],
     pub pos: *mut Node,
     pub len: i64,
+    pub max_len: i64,
 }
 
 // ============================== エラー ==============================

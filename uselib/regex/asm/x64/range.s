@@ -5,18 +5,18 @@ empty:
     .byte 255, 255, 255
 .align 4
 num:
-    .byte 1
+    .byte 1, 1
     .byte '0', '9'
 .align 4
 alpha:
-    .byte 4
+    .byte 4, 4
     .byte 'a', 'z'
     .byte 'A', 'Z'
     .byte '0', '9'
     .byte '_', '_'
 .align 4
 space:
-    .byte 4
+    .byte 4, 4
     .byte ' ', ' '
     .byte '\t', '\t'
     .byte '\n', '\n'

@@ -1,7 +1,7 @@
 #include "all.h"
 
 
-NodeResult make_ok_result(long len) {
+NodeResult ok_val(long len) {
     NodeResult result = {
         .ok = len,
         .kind = Ok,
@@ -11,10 +11,10 @@ NodeResult make_ok_result(long len) {
 
 NodeResult make_err_result(char *msg) {
     NodeResult result = {
-        .err = "\0",
+        .err = {0},
         .kind = Err,
     };
-    simd_strcpy(msg, result.err);
+    simd_strcpy(result.err, msg);
     return result;
 }
 

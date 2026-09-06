@@ -31,7 +31,7 @@ struct CharOpt
 struct CharResult {
     union {
         char ok;
-        char* err;
+        char err[256];
     };
     ResultKind kind;
 };
@@ -40,7 +40,7 @@ struct CharResult {
 typedef struct NodeResult {
     union {
         long ok;
-        char* err;
+        char err[256];
     };
     ResultKind kind;
 } NodeResult;
@@ -68,10 +68,14 @@ typedef struct Node {
     long right;
 } Node;
 
+
+#define MaxLen 2048
+
 typedef struct Nodes {
-    Node nodes[2048];
+    Node nodes[MaxLen];
     Node *pos;
     long len;
+    long max_len;
 } Nodes;
 
 
@@ -80,6 +84,12 @@ typedef struct CharOpt CharOpt;
 typedef struct CharResult CharResult;
 
 CharOpt peek(Parser *this);
+
+// c/parser.c
+Parser parse_new(const char* pattern, long len);
+NodeResult parse_alt(Parser *self, Nodes *nodes);
+void parser_drop(Parser *self);
+
 
 // asm/chr.s
 char change_byte_chr(volatile Parser *);
@@ -92,11 +102,18 @@ char* shorthand_class_ranges(char);
 
 
 // c/result.c
-NodeResult make_ok_result(long len);
+NodeResult ok_val(long len);
 NodeResult make_err_result(char *msg);
 
 // c/node.c
-Nodes ini_nodes();
+/* 修正: 元は `Nodes ini_nodes();` で構造体を値渡し(約49KB)で返していた。
+   Rust 側 (src/regex.rs) は `fn ini_nodes() -> &'static mut Nodes;` と
+   ポインタ返却を前提に宣言しているため、SysV ABI 的には x86-64 では
+   16byte超の構造体返却は「呼び出し側が隠しポインタ引数(RDI)を渡し、
+   関数がそこへ書き込む」規約になる。Rust はポインタ返却だと思って
+   その隠しポインタを渡さないため、C側は不定値の RDI へ 49KB を
+   memcpy してしまい、確実にクラッシュする。ポインタを返す形に修正。 */
+Nodes* ini_nodes();
 void push_node(Nodes *nodes, Node new_node);
 long pop_node(Nodes *nodes);
 long make_range_pair(Nodes *nodes, long start, long end);

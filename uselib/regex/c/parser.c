@@ -1,5 +1,13 @@
 #include "all.h"
 
+/* mem/allocator.c の自前アロケータ。
+   修正: 以前はここで libc 互換の `malloc`/`free` という名前で
+   プロトタイプを宣言していたが、そのシグネチャのまま静的リンクすると
+   Rust 標準ライブラリの内部確保まで乗っ取ってしまい、
+   allocator_init() 未呼び出し状態で即 OOM abort する事故につながった。
+   衝突しない名前 (mem_malloc/mem_free) を使う。 */
+void *mem_malloc(long size);
+void mem_free(void *ptr);
 
 
 CharOpt peek(Parser *this) {
@@ -91,7 +99,7 @@ NodeResult parse_alt(Parser *self, Nodes *nodes);
     bump(self);\
     long __range = make_range_pair(nodes, s, e);\
     long __idx = make_node(nodes, Repeat, atom.ok, __range);\
-    return make_ok_result(__idx); \
+    return ok_val(__idx); \
 }
 
 
@@ -115,17 +123,21 @@ static CharResult parse_class_char(Parser *this) {
 }
 
 
-Parser parse_new(const char* pattern) {
+Parser parse_new(const char* pattern, long len) {
     static Parser parse;
-    int len = simd_strcpy(parse.chars, pattern);
-    parse.chars_len = len;
+    parse.chars = (char *)mem_malloc((long)len + 1);
+    int copied = simd_strcpy(parse.chars, pattern);
+    parse.chars_len = copied;
     parse.pos = 0;
     parse.group_count = 0;
     return parse;
 }
 
 
-NodeResult parse_alt(Parser *self, Nodes *nodes) {
+NodeResult parse_alt(
+    Parser *restrict self, 
+    Nodes *restrict nodes
+) {
     long start = nodes->len;
 
     /* 修正: 最初の枝も他の枝と同様に nodes に積む（元コードは積んでいなかった） */
@@ -139,43 +151,60 @@ NodeResult parse_alt(Parser *self, Nodes *nodes) {
     /* 修正: グローバルな nodes->len ではなく、この parse_alt 呼び出しで
        追加された枝の数（差分）で「分岐が1つだけか」を判定する */
     if (nodes->len - start == 1) {
-        return make_ok_result(pop_node(nodes));
+        /* 修正: ここで free(self->chars) していたが、parse_alt は
+           "(...)" グループのたびに再帰されるため、ネストしたグループの
+           数だけ同じポインタに対して free() が呼ばれてしまい
+           二重解放 (double free) になっていた。解放は一番外側の
+           呼び出し元が「パース完了後に1回だけ」行うべきなので、
+           ここでは何もせず ok_val を返すだけにする。
+           (解放は parser_drop() を参照) */
+        return ok_val(pop_node(nodes));
     } else {
         long idx = make_range_pair(nodes, start, nodes->len);
         long alt_idx = make_alt_node(nodes, idx);
-        return make_ok_result(alt_idx);
+        return ok_val(alt_idx);
     }
 }
 
-static NodeResult parse_concat(Parser *self, Nodes *nodes) {
+/*
+ * パターン文字列バッファの解放。
+ * parse_alt は "(...)" グループごとに再帰されるため、内部で free() すると
+ * 同じポインタを複数回解放してしまう (二重解放)。そのため解放はここに
+ * 一本化し、一番外側の parse_alt 呼び出しが完全に終わった後に
+ * 呼び出し元 (Rust 側の Regex::new) から一度だけ呼んでもらう。
+ */
+void parser_drop(Parser *self) {
+    mem_free(self->chars);
+    self->chars = 0;
+}
+
+static NodeResult parse_concat(
+    Parser *restrict self, 
+    Nodes *restrict nodes
+) {
     long nodes_start = nodes->len;
     while (peek(self).kind == Some) {
-        char c = *peek(self).value; /* 修正: 逆参照忘れ (*) を追加 */
+        char c = *peek(self).value;
         if (c == '|' || c == ')')
             break;
-        /* 修正: parse_concat の自己再帰(無限ループ)になっていたのを
-           parse_repeat の呼び出しに修正 */
         PushNode(parse_repeat(self, nodes));
     }
     long idx = make_range_pair(nodes, nodes_start, nodes->len);
-    /* 修正: ここは Alt ではなく Concat を作る箇所。
-       parse_bound の '{' リテラル化フォールバックと同じ
-       「Range 種別で複数ノードの並びをラップする」パターンに合わせた。★要 all.h 確認 */
-    long concat_idx = make_node(nodes, Range, idx, 0);
-    return make_ok_result(concat_idx);
+    long concat_idx = make_concat_node(nodes, idx);
+    return ok_val(concat_idx);
 }
 
 
-static NodeResult parse_repeat(Parser *self, Nodes *nodes) {
+static NodeResult parse_repeat(
+    Parser *restrict self, 
+    Nodes *restrict nodes
+) {
     NodeResult atom = parse_atom(self, nodes);
     if (atom.kind == Err)
         return atom;
 
-    /* 修正: 誤って付いていたセミコロンを削除。
-       これがあると if の中身が空文になり、量指定子(*+?{})が
-       一切適用されなくなる致命的バグだった */
     if (peek(self).kind == None)
-        return make_ok_result(atom.ok);
+        return ok_val(atom.ok);
 
     switch (*peek(self).value) {
     case '*':
@@ -191,7 +220,11 @@ static NodeResult parse_repeat(Parser *self, Nodes *nodes) {
     }
 }
 
-static NodeResult parse_bound(Parser *self, Nodes *nodes, long atom) {
+static NodeResult parse_bound(
+    Parser *restrict self, 
+    Nodes *restrict nodes, 
+    long atom
+) {
     long checkpoint = self->pos;
     bump(self); // '{'
     char* min_s[2] = {peek(self).value, 0};
@@ -204,12 +237,11 @@ static NodeResult parse_bound(Parser *self, Nodes *nodes, long atom) {
             break;
     }
     if (min_s[1] == 0) {
-        // "{" が数量子として不正 -> リテラルの '{' として扱う
         self->pos = checkpoint + 1;
         long right = make_node(nodes, Char, (long)'{', 0);
         long range_idx = make_range_pair(nodes, atom, right);
         long idx = make_node(nodes, Range, range_idx, 0);
-        return make_ok_result(idx);
+        return ok_val(idx);
     }
 
     char* max[2] = {(char*)0xFF, (char*)0xFF};
@@ -218,47 +250,44 @@ static NodeResult parse_bound(Parser *self, Nodes *nodes, long atom) {
     if (match_chr(self, ',')) {
         max_s.start = peek(self).value;
         bump(self);
-        /* 修正: カンマ演算子になっていた条件を正しい比較に修正
-           (元は while (peek(self).kind, Some) で常に true 扱いだった) */
         while (peek(self).kind == Some) {
             char *c = peek(self).value;
             if (is_byte_digit(*c) == 1) {
                 max_s.end = c;
                 bump(self);
-            } else {
+            } else
                 break;
-            }
         }
         if (max_s.end != 0) {
             max[0] = max_s.start;
             max[1] = max_s.end;
         }
     } else {
-        /* 修正: ',' が無い場合は Rust版で `Some(min)` となる箇所、
-           つまり max 側を min の値で埋めるべきところを、元コードは
-           逆に min 側を未初期化の max_s(0,0) で潰してしまっていた */
         max[0] = min_s[0];
         max[1] = min_s[1];
     }
 
     if (unmatch_bump(self, '}'))
-        return make_err_result("'{' に対応する '}' がありません");
+        return make_err_result("'{' に対応する '}' がありません\0");
 
     long idx = make_range_pair(
         nodes,
         parse_num(min_s[0], min_s[1]),
         parse_num(max[0], max[1])
     );
-    return make_ok_result(make_node(nodes, Repeat, idx, 0));
+    return ok_val(
+        make_node(nodes, Repeat, idx, 0)
+    );
 }
 
 
-static NodeResult parse_atom(Parser *self, Nodes *nodes) {
+static NodeResult parse_atom(
+    Parser *restrict self, 
+    Nodes *restrict nodes
+) {
     CharOpt c0 = bump(self);
-    /* 修正: カンマ演算子になっていた条件を正しい比較に修正
-       (元は if (c0.kind, None) で常に false 扱いだった) */
     if (c0.kind == None)
-        return make_err_result("パターンが予期せず終了しました");
+        return make_err_result("パターンが予期せず終了しました\0");
 
     switch (*c0.value) {
     case '(': {
@@ -273,146 +302,146 @@ static NodeResult parse_atom(Parser *self, Nodes *nodes) {
             group_idx = self->group_count;
         }
         NodeResult inner = parse_alt(self, nodes);
-        /* 修正: parse_alt のエラーを伝播せずに unmatch_bump へ進んでいた
-           (Rust版の `?` に相当する処理が抜けていた) */
         if (inner.kind == Err)
             return inner;
         if (unmatch_bump(self, ')'))
-            return make_err_result("'(' に対応する ')' がありません");
+            return make_err_result("'(' に対応する ')' がありません\0");
         if (group_idx != -1) {
-            /* 修正: 未定義変数 i の使用、inner.value(存在しないフィールド)、
-               Group 種別引数の欠落を修正 */
             long node_idx = make_node(nodes, Group, inner.ok, group_idx);
-            return make_ok_result(node_idx);
-        } else {
+            return ok_val(node_idx);
+        } else
             return inner;
-        }
     }
     case '.': {
         long idx = make_one_node(nodes, Any);
-        return make_ok_result(idx);
+        return ok_val(idx);
     }
     case '^': {
         long idx = make_one_node(nodes, Start);
-        return make_ok_result(idx);
+        return ok_val(idx);
     }
     case '$': {
         long idx = make_one_node(nodes, End);
-        return make_ok_result(idx);
+        return ok_val(idx);
     }
     case '[':
         return parse_class(self, nodes);
     case '\\':
-        /* 修正: 末尾がカンマになっており構文エラーだった箇所をセミコロンに修正 */
         return parse_escape(self, nodes);
     default: {
-        /* 修正: 未定義変数 c を使用していた箇所を *c0.value に修正 */
         long idx = make_node(nodes, Char, (long)*c0.value, 0);
-        return make_ok_result(idx);
+        return ok_val(idx);
     }
     }
 }
 
-/* ★ 以下 3 つは all.h に実体が無い前提のヘルパー。
-   [0-9] / [a-zA-Z0-9_] / [ \t\n\r] という Rust版と同一のレンジ集合を
-   アリーナに積んで Class ノードを作るためのものです。
-   実際の range 追加 API / Class ノード生成 API 名に置き換えてください。 */
-static long make_class_from_pairs(Nodes *nodes, const char pairs[][2], int count, int negated) {
-    long start = nodes->len; /* ★ 要 all.h 確認: range 用バッファの長さフィールド名 */
+static long make_cls_pairs(
+    Nodes *nodes, 
+    const char pairs[][2], 
+    int count, 
+    int negated
+) {
+    long start = nodes->len;
     for (int i = 0; i < count; i++) {
-        make_range_pair(nodes, pairs[i][0], pairs[i][1]); /* ★ 要 all.h 確認 */
+        make_range_pair(nodes, pairs[i][0], pairs[i][1]);
     }
-    return make_node(nodes, start, nodes->len, negated); /* ★ 要 all.h 確認 */
+    long range_idx = make_range_pair(nodes, start, nodes->len);
+    return make_node(nodes, Class, range_idx, negated);
 }
 
-static NodeResult parse_escape(Parser *self, Nodes *nodes) {
-    // エスケープされる文字
+static void gen_range_pairs(Nodes *nodes, char c);
+
+static NodeResult parse_escape(
+    Parser *restrict self, 
+    Nodes *restrict nodes
+) {
     if (peek(self).kind == None)
-        return make_err_result("末尾がバックスラッシュで終わっています");
+        return make_err_result("末尾がバックスラッシュで終わっています\0");
 
     char c = *peek(self).value;
-
-    // エスケープ対象も消費する
     bump(self);
 
     switch (c) {
     case 'd': case 'D': {
-        static const char pairs[][2] = {{'0','9'}};
-        long idx = make_class_from_pairs(nodes, pairs, 1, c == 'D');
-        return make_ok_result(idx);
+        char (*table)[2] = (char (*)[2])shorthand_class_ranges('d');
+        int count = (unsigned char)table[0][0];
+        long idx = make_cls_pairs(nodes, table + 1, count, c == 'D');
+        return ok_val(idx);
     }
     case 'w': case 'W': {
-        static const char pairs[][2] = {{'a','z'}, {'A','Z'}, {'0','9'}, {'_','_'}};
-        long idx = make_class_from_pairs(nodes, pairs, 4, c == 'W');
-        return make_ok_result(idx);
+        char (*table)[2] = (char (*)[2])shorthand_class_ranges('w');
+        int count = (unsigned char)table[0][0];
+        long idx = make_cls_pairs(nodes, table + 1, count, c == 'W');
+        return ok_val(idx);
     }
     case 's': case 'S': {
-        static const char pairs[][2] = {{' ',' '}, {'\t','\t'}, {'\n','\n'}, {'\r','\r'}};
-        long idx = make_class_from_pairs(nodes, pairs, 4, c == 'S');
-        return make_ok_result(idx);
+        char (*table)[2] = (char (*)[2])shorthand_class_ranges('s');
+        int count = (unsigned char)table[0][0];
+        long idx = make_cls_pairs(nodes, table + 1, count, c == 'S');
+        return ok_val(idx);
     }
     case 'n':
-        return make_ok_result(make_node(nodes, Char, (long)'\n', 0));
+        return ok_val(make_node(nodes, Char, (long)'\n', 0));
     case 't':
-        return make_ok_result(make_node(nodes, Char, (long)'\t', 0));
+        return ok_val(make_node(nodes, Char, (long)'\t', 0));
     case 'r':
-        return make_ok_result(make_node(nodes, Char, (long)'\r', 0));
+        return ok_val(make_node(nodes, Char, (long)'\r', 0));
     default:
-        // \. \* \\ など、そのままリテラル化
-        return make_ok_result(make_node(nodes, Char, (long)c, 0));
+        return ok_val(make_node(nodes, Char, (long)c, 0));
     }
 }
 
-static NodeResult parse_class(Parser *self, Nodes *nodes) {
+static NodeResult parse_class(
+    Parser *restrict self, 
+    Nodes *restrict nodes
+) {
     int negated = 0;
-    if (match_chr(self, '^')) {
-        negated = 1;
+    if (negated=match_chr(self, '^'))
         bump(self);
-    }
 
-    long ranges_start = nodes->len; /* ★ 要 all.h 確認 */
+    long ranges_start = nodes->len;
     int first = 1;
 
     for (;;) {
         if (match_chr(self, ']') && !first) {
             bump(self);
             break;
-        } else if (peek(self).kind == None) {
-            return make_err_result("'[' に対応する ']' がありません");
-        }
+        } else if (peek(self).kind == None)
+            return make_err_result("'[' に対応する ']' がありません\0");
+
         first = 0;
 
         if (match_chr(self, '\\')
             && peek2(self).kind == Some
-            && (*peek2(self).value == 'd' || *peek2(self).value == 'w' || *peek2(self).value == 's'))
+            && (
+                *peek2(self).value == 'd' 
+                || *peek2(self).value == 'w' 
+                || *peek2(self).value == 's'
+            ))
         {
-            bump(self); // '\\' を消費
-            char kind = *bump(self).value; // d/w/s を消費
+            bump(self);
+            char kind = *bump(self).value;
             switch (kind) {
             case 'd':
-                make_range_pair(nodes, '0', '9'); /* ★ 要 all.h 確認 */
+                make_range_pair(nodes, '0', '9');
                 break;
             case 'w':
-                make_range_pair(nodes, 'a', 'z');
-                make_range_pair(nodes, 'A', 'Z');
-                make_range_pair(nodes, '0', '9');
-                make_range_pair(nodes, '_', '_');
+                gen_range_pairs(nodes, 'w');
                 break;
             case 's':
-                make_range_pair(nodes, ' ', ' ');
-                make_range_pair(nodes, '\t', '\t');
-                make_range_pair(nodes, '\n', '\n');
-                make_range_pair(nodes, '\r', '\r');
+                gen_range_pairs(nodes, 's');
                 break;
+            default:
+                continue;
             }
             continue;
         }
 
-        /* 修正: 元コード(Rust貼り付け)は .unwrap() でエラーを握りつぶし
-           panic していた。他の箇所と同様に RegexError として伝播させる */
         CharResult r1 = parse_class_char(self);
         if (r1.kind == Err) {
-            NodeResult err = { .err = r1.err, Err };
+            NodeResult err;
+            simd_strcpy(err.err, r1.err);
+            err.kind = Err;
             return err;
         }
         char c1 = r1.ok;
@@ -421,18 +450,30 @@ static NodeResult parse_class(Parser *self, Nodes *nodes) {
             && peek2(self).kind == Some
             && *peek2(self).value != ']')
         {
-            bump(self); // '-'
+            bump(self);
             CharResult r2 = parse_class_char(self);
             if (r2.kind == Err) {
-                NodeResult err = { .err = r2.err, Err };
+                NodeResult err;
+                simd_strcpy(err.err, r2.err);
+                err.kind = Err;
                 return err;
             }
-            make_range_pair(nodes, c1, r2.ok); /* ★ 要 all.h 確認 */
+            make_range_pair(nodes, c1, r2.ok);
         } else {
             make_range_pair(nodes, c1, c1);
         }
     }
 
-    long idx = make_node(nodes, ranges_start, nodes->len, negated); /* ★ 要 all.h 確認 */
-    return make_ok_result(idx);
+    long range_idx = make_range_pair(nodes, ranges_start, nodes->len);
+    long idx = make_node(nodes, Class, range_idx, negated);
+    return ok_val(idx);
 }
+
+static void gen_range_pairs(Nodes *nodes, char c) {
+    char (*pair)[2] = (char (*)[2])shorthand_class_ranges(c);
+    int len = (unsigned char)pair[0][0];
+    for (int i = 1; i <= len; i++) {
+        make_range_pair(nodes, pair[i][0], pair[i][1]);
+    }
+}
+

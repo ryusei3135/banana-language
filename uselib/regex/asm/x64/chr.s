@@ -1,14 +1,12 @@
 .text
 .global change_byte_chr
-.type change_byte_chr, @function
-
 .global is_byte_digit
-.type is_byte_digit, @function
-
 .global simd_strcpy
-.type simd_strcpy, @function
-
 .global parse_num
+
+.type change_byte_chr, @function
+.type is_byte_digit, @function
+.type simd_strcpy, @function
 .type parse_num, @function
 
 .extern peek
@@ -20,35 +18,30 @@ change_byte_chr:
     subq $16, %rsp
 
     movq %rdi, (%rsp)
-
     call peek
-
+    movq (%rsp), %rdi
     
-    movzbq %al, %rcx           # %raxの下位1バイト(value)を %rcx にゼロ拡張でコピー
-    
+    movzbl %al, %ecx           # %eaxの下位1バイト(value)を %ecx にゼロ拡張でコピー
     # \\n
-    cmp $110, %rcx
+    cmpl $110, %ecx
     jnz .N0
-    mov $10, %rax           # \\n (10) を戻り値にする
+    movl $10, %eax           # \\n (10) を戻り値にする
     leave
     ret
-    
 .N0: # \\t
-    cmp $116, %rcx
+    cmpl $116, %ecx
     jnz .N1
-    mov $9, %rax            # \\t (9) を戻り値にする
+    movl $9, %eax            # \\t (9) を戻り値にする
     leave
     ret
-    
 .N1: # \\r
-    cmp $114, %rcx
+    cmpl $114, %ecx
     jnz .N2
-    mov $13, %rax           # \\r (13) を戻り値にする
+    movl $13, %eax           # \\r (13) を戻り値にする
     leave
     ret
-    
 .N2:
-    mov %rcx, %rax          # マッチしなかった場合は、読み込んだ文字コードをそのまま返す
+    mov %ecx, %eax          # マッチしなかった場合は、読み込んだ文字コードをそのまま返す
     leave
     ret
 
@@ -57,7 +50,7 @@ is_byte_digit:
     pushq %rbp
     movq %rsp, %rbp
     subq $16, %rsp
-    
+
     movzbl  %dil, %eax
     # 48以上57以下の場合のみ1を返す
     cmpl $48, %eax
@@ -77,27 +70,59 @@ simd_strcpy:
     pushq %rbp
     movq %rsp, %rbp
     pushq %rdi
-    vpxor   %ymm1, %ymm1, %ymm1 # %ymm1 をすべて 0 に初期化 (\0 検出用)
+
+    # ymm1 = 0
+    vpxor %ymm1, %ymm1, %ymm1
 .L_loop:
-    vmovdqu (%rsi), %ymm0       # src から 32 バイト読み込み
-    vpcmpeqb %ymm1, %ymm0, %ymm2 # ymm0 の各バイトが \0 か比較。一致なら 0xFF、不一致なら 0x00
-    vpmovmskb %ymm2, %eax        # 比較結果を 32 ビットのビットマスクに変換
+    movq %rsi, %rax
+    andq $0xfff, %rax
+    cmpq $0xfe0, %rax
+    ja .L_scalar
+    movq %rdi, %rax
+    andq $0xfff, %rax
+    cmpq $0xfe0, %rax
+    ja .L_scalar
+    vmovdqu (%rsi), %ymm0
 
-    testl %eax, %eax          # \0 が見つかったかチェック
-    jnz .L_found_null       # 0 でなければ（\0 があれば）ループ脱出へ
+    # NULL byteを探す
+    vpcmpeqb %ymm1, %ymm0, %ymm2
 
-    # \0 が見つからない場合は 32 バイトをそのままコピーして次へ
+    # 各byteの比較結果をbit maskへ
+    vpmovmskb %ymm2, %eax
+
+    testl %eax, %eax
+    jnz .L_found_null
+
+    # NULLがなければ32byteコピー
     vmovdqu %ymm0, (%rdi)
+
     addq $32, %rsi
     addq $32, %rdi
+
     jmp .L_loop
+.L_scalar:
+    movb (%rsi), %al
+    movb %al, (%rdi)
 
+    incq %rsi
+    incq %rdi
+
+    testb %al, %al
+    jnz .L_loop
+
+    jmp .L_done
 .L_found_null:
-    # ビットマスク（%eax）の最下位ビットから連続する 0 の個数を数える (tzcnt)
-    # これにより、32バイト中の何番目に \0 があったかがわかる
-    tzcntl %eax, %ecx           # %ecx = \0 までのバイト数
-
-    # 残りのバイト（\0 を含む）を1バイトずつコピー
+    # 最初のNULLの位置
+    #
+    # eax:
+    #   00010000...
+    #
+    # tzcnt:
+    #   最下位の1までのbit数
+    #
+    # = NULLまでのbyte数
+    #
+    tzcntl %eax, %ecx
 .L_copy_remaining:
     movb (%rsi), %dl
     movb %dl, (%rdi)
@@ -105,12 +130,12 @@ simd_strcpy:
     incq %rdi
     decl %ecx
     jns .L_copy_remaining
-
+.L_done:
     movq (%rsp), %rax
     subq %rax, %rdi
     decq %rdi
     movq %rdi, %rax
-
+    vzeroupper
     popq %rdi
     popq %rbp
     ret
@@ -123,41 +148,36 @@ parse_num:
     pushq %rbp
     movq %rsp, %rbp
 
-    xorq %rax, %rax
+    xorl %eax, %eax
     xorl %ecx, %ecx
 
     cmpq %rsi, %rdi          # start == end の場合は即終了
-    jae .L_done
-
+    jae .L_done1
     # 最初の文字が '-'（マイナス）かチェック
-    movzbq  (%rdi), %rdx
+    movzbl  (%rdi), %edx
     cmpb $45, %dl            # '-' の ASCII コードは 45
     jne .L_loop_digits
     movl $1, %ecx
     incq %rdi
-
 .L_loop_digits:
     cmpq %rsi, %rdi
     jae .L_apply_sign
 
-    movzbq (%rdi), %rdx
-    
+    movzbl (%rdi), %edx
     # '0' (48) 〜 '9' (57) の範囲チェック
-    subq $48, %rdx
-    cmpq $9, %rdx
+    subl $48, %edx
+    cmpl $9, %edx
     ja .L_apply_sign
-
     # %rax = %rax * 10 + %rdx の計算
-    imulq $10, %rax
-    addq %rdx, %rax
+    imull $10, %eax
+    addl %edx, %eax
 
     incq %rdi
     jmp .L_loop_digits
 .L_apply_sign:
     testl %ecx, %ecx
-    jz .L_done
-    negq %rax  
-
-.L_done:
+    jz .L_done1
+    negl %eax  
+.L_done1:
     popq %rbp
     ret

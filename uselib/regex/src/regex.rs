@@ -39,8 +39,9 @@ pub struct NodeResult {
 unsafe extern "C" {
     pub fn ini_nodes() -> &'static mut Nodes;
 
-    pub fn parse_new(pattern: *const u8) -> Parser;
+    pub fn parse_new(pattern: *const u8, len: i64) -> Parser;
     pub fn parse_alt(p: *mut Parser, n: *mut Nodes) -> NodeResult;
+    pub fn parser_drop(p: *mut Parser);
 }
 
 
@@ -58,9 +59,17 @@ impl Regex {
                 RegexError(format!("パターンに NUL 文字が含まれています: {}", e))
             })?;
 
-            let mut parser: Parser = parse_new(c_pattern.as_ptr() as *const u8);
+            let mut parser: Parser = parse_new(
+                c_pattern.as_ptr() as *const u8, 
+                pattern.bytes().len() as i64
+            );
             let nodes: &'static mut Nodes = ini_nodes();
             let result = parse_alt(&mut parser, nodes);
+            // 修正: parse_alt の中(再帰呼び出しのたび)で free していたため
+            // ネストしたグループのある正規表現で二重解放になっていた。
+            // パターン文字列バッファはここ、一番外側の呼び出しが完全に
+            // 終わった直後に一度だけ解放する。
+            parser_drop(&mut parser);
             if parser.pos < parser.chars_len {
                 return Err(RegexError(format!(
                     "予期しない文字が {} 文字目にあります",
@@ -88,10 +97,6 @@ impl Regex {
         for pos in start..=chars.len() {
             let mut caps: Caps = vec![None; self.group_count + 1];
             let mut k: Box<Cont> = Box::new(|end, _caps: &mut Caps| Some(end));
-            // 修正: self.root がノード配列ではなく index になったため、
-            // アリーナ本体 (self.nodes) と根の index (self.root) の両方を渡す。
-            // (★ match_node の正確なシグネチャがこのファイルには無いため、
-            //    (nodes, root_idx, chars, pos, caps, cont) を受け取る前提にしています)
             if let Some(end) = match_node(self.nodes, self.root, chars, pos, &mut caps, &mut *k) {
                 caps[0] = Some((pos, end));
                 return Some(caps);
