@@ -132,7 +132,7 @@ parse_num:
     # 最初の文字が '-'（マイナス）かチェック
     movzbq  (%rdi), %rdx
     cmpb $45, %dl            # '-' の ASCII コードは 45
-    bne .L_loop_digits
+    jne .L_loop_digits
     movl $1, %ecx
     incq %rdi
 

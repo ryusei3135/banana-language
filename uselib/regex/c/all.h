@@ -9,15 +9,15 @@ struct Parser {
 };
 
 
-enum OpKind {
+typedef enum OpKind {
     None,
     Some,
-};
+} OpKind;
 
-enum ResultKind {
+typedef enum ResultKind {
     Ok,
     Err,
-};
+} ResultKind;
 
 typedef enum OpKind OpKind;
 typedef enum ResultKind ResultKind;
@@ -36,14 +36,6 @@ struct CharResult {
     ResultKind kind;
 };
 
-
-
-
-
-typedef enum ResultKind {
-    Ok,
-    Err,
-} ResultKind;
 
 typedef struct NodeResult {
     union {
