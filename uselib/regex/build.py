@@ -23,7 +23,7 @@ def files_com(file_list):
     for f in file_list:
         obj = BUILD / (f.stem + ".o")
 
-        subprocess.run([
+        r=subprocess.run([
             "gcc",
             "-c",
             str(f),
@@ -32,6 +32,7 @@ def files_com(file_list):
             "-O2",
             "-fPIC",
         ], check=True)
+        print(" ll ", r)
 
         objects.append(obj)
 
@@ -45,6 +46,8 @@ if not objects:
         f"No C or Assembly files found in {SRC_C}"
     )
 
+print("files *.o", objects)
+
 # static library
 subprocess.run([
     "ar",
@@ -53,4 +56,4 @@ subprocess.run([
     *map(str, objects),
 ], check=True)
 
-print("libprint.a created")
+print("libregex.a created")

@@ -1,25 +1,84 @@
 use super::*;
+use std::ffi::{CStr, CString};
 
-// ============================== 公開API ==============================
 
-/// コンパイル済み正規表現。`new` と `replace_all` のみ実装。
+
+#[repr(C)]
+pub struct Parser {
+    pub chars: *mut u8,
+    pub chars_len: usize,
+    pub pos: usize,
+    pub group_count: usize,
+}
+
+#[repr(C)]
+pub enum OpKind {
+    NONE,
+    SOME,
+}
+
+#[repr(C)]
+pub enum ResultKind {
+    Ok,
+    Err,
+}
+
+#[repr(C)]
+pub union NodeVal {
+    pub ok: i64,
+    pub err: *mut u8,
+}
+
+#[repr(C)]
+pub struct NodeResult {
+    pub v: NodeVal,
+    pub kind: ResultKind,
+}
+
+
+unsafe extern "C" {
+    pub fn ini_nodes() -> &'static mut Nodes;
+
+    pub fn parse_new(pattern: *const u8) -> Parser;
+    pub fn parse_alt(p: *mut Parser, n: *mut Nodes) -> NodeResult;
+}
+
+
 pub struct Regex {
-    root: Node,
+    nodes: &'static Nodes,
+    root: i64,
     group_count: usize,
 }
 
 impl Regex {
     /// 正規表現パターンをコンパイルする。
     pub fn new(pattern: &str) -> Result<Regex, RegexError> {
-        let mut parser = Parser::new(pattern);
-        let root = parser.parse_alt()?;
-        if parser.pos > parser.chars_len {
-            return Err(RegexError(format!(
-                "予期しない文字が {} 文字目にあります",
-                parser.pos
-            )));
+        unsafe {
+            let c_pattern = CString::new(pattern).map_err(|e| {
+                RegexError(format!("パターンに NUL 文字が含まれています: {}", e))
+            })?;
+
+            let mut parser: Parser = parse_new(c_pattern.as_ptr() as *const u8);
+            let nodes: &'static mut Nodes = ini_nodes();
+            let result = parse_alt(&mut parser, nodes);
+            if parser.pos < parser.chars_len {
+                return Err(RegexError(format!(
+                    "予期しない文字が {} 文字目にあります",
+                    parser.pos
+                )));
+            }
+
+            let root = match result.kind {
+                ResultKind::Ok => result.v.ok,
+                ResultKind::Err => return Err(RegexError(cstr_to_string(result.v.err))),
+            };
+
+            Ok(Regex {
+                nodes,
+                root,
+                group_count: parser.group_count,
+            })
         }
-        Ok(Regex { root, group_count: parser.group_count })
     }
 
     /// `chars` の `start` 文字目以降で最初にマッチする位置を探す。
@@ -29,7 +88,11 @@ impl Regex {
         for pos in start..=chars.len() {
             let mut caps: Caps = vec![None; self.group_count + 1];
             let mut k: Box<Cont> = Box::new(|end, _caps: &mut Caps| Some(end));
-            if let Some(end) = match_node(&self.root, chars, pos, &mut caps, &mut *k) {
+            // 修正: self.root がノード配列ではなく index になったため、
+            // アリーナ本体 (self.nodes) と根の index (self.root) の両方を渡す。
+            // (★ match_node の正確なシグネチャがこのファイルには無いため、
+            //    (nodes, root_idx, chars, pos, caps, cont) を受け取る前提にしています)
+            if let Some(end) = match_node(self.nodes, self.root, chars, pos, &mut caps, &mut *k) {
                 caps[0] = Some((pos, end));
                 return Some(caps);
             }
@@ -70,6 +133,18 @@ impl Regex {
         result.push_str(&text[char_to_byte[last_end]..]);
         result
     }
+}
+
+/// C 側から渡ってきたエラーメッセージ (`*const u8`, NUL終端) を String に変換する。
+/// `parse_class_char` / `parse_bound` などの Err メッセージは全て C 文字列リテラルなので、
+/// ここで一箇所にまとめて安全に扱う。
+unsafe fn cstr_to_string(ptr: *const u8) -> String {
+    if ptr.is_null() {
+        return String::from("不明なエラーです");
+    }
+    CStr::from_ptr(ptr as *const i8)
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// `Regex::replace_all` に渡せる「置換の仕方」を表すトレイト。
@@ -146,10 +221,10 @@ impl<'t> Captures<'t> {
                     i += 2;
                     continue;
                 }
-                if unsafe {is_byte_digit(chars[i + 1] as u8) == 1} {
+                if unsafe { is_byte_digit(chars[i + 1] as u8) == 1 } {
                     let mut j = i + 1;
                     let mut num = String::new();
-                    while j < chars.len() && unsafe {is_byte_digit(chars[j] as u8) == 1} {
+                    while j < chars.len() && unsafe { is_byte_digit(chars[j] as u8) == 1 } {
                         num.push(chars[j]);
                         j += 1;
                     }
@@ -178,4 +253,3 @@ impl<'t> std::ops::Index<usize> for Captures<'t> {
             .unwrap_or_else(|| panic!("キャプチャグループ {} はマッチしていません", i))
     }
 }
-

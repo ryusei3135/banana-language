@@ -47,6 +47,11 @@ shorthand_class_ranges:
     leaq space(%rip), %rax
     jmp .return
 .N2:
+    cmpl $'S', %ecx
+    jnz .N3
+    leaq space(%rip), %rax
+    jmp .return
+.N3:
     leaq empty(%rip), %rax
 .return:
     leave

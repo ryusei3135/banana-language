@@ -1,28 +1,42 @@
 use std::error::Error;
 use std::fmt;
 
-mod parser;
 mod regex;
-// mod node;
 
-use parser::*;
-
-pub use regex::Regex;
 pub use regex::Captures;
+pub use regex::Regex;
 
 // ============================== AST ==============================
 
-#[derive(Debug)]
-enum Node {
-    Char(char),
+#[repr(C)]
+pub enum NodeKind {
+    Char,
     Any,
     Start,
     End,
-    Class(Vec<(char, char)>, bool), // (範囲リスト, 否定フラグ)
-    Concat(Vec<Node>),
-    Alt(Vec<Node>),
-    Repeat(Box<Node>, usize, Option<usize>), // (中身, min, max)
-    Group(Box<Node>, usize),                 // キャプチャ番号 (1始まり)
+    Class,  // left = レンジ一覧(Rangeノード)のindex, right = 否定フラグ
+    Concat, // left = 子ノード列(Rangeノード)のindex
+    Alt,    // left = 子ノード列(Rangeノード)のindex
+    Repeat, // left = 中身のindex, right = (min,max)を持つRangeノードのindex
+    Group,  // left = 中身のindex, right = キャプチャ番号 (1始まり)
+
+    Range, // l = start, r = end
+    Nodes, // is ptr
+    Flag,  // r = bool
+}
+
+#[repr(C)]
+pub struct Node {
+    pub kind: NodeKind,
+    pub left: i64,
+    pub right: i64,
+}
+
+#[repr(C)]
+pub struct Nodes {
+    pub nodes: [Node; 2048],
+    pub pos: *mut Node,
+    pub len: i64,
 }
 
 // ============================== エラー ==============================
@@ -48,23 +62,34 @@ unsafe extern "C" {
 type Caps = Vec<Option<(usize, usize)>>;
 type Cont<'a> = dyn FnMut(usize, &mut Caps) -> Option<usize> + 'a;
 
+/// `Range` ノード (left=start, right=end) が指す、アリーナ上で連続する
+/// 子ノードの index 列 [start, end) を取り出す小さなヘルパー。
+fn range_bounds(nodes: &Nodes, range_idx: i64) -> (i64, i64) {
+    let r = &nodes.nodes[range_idx as usize];
+    (r.left, r.right)
+}
+
 fn match_node(
-    node: &Node,
+    nodes: &Nodes,
+    idx: i64,
     input: &[char],
     pos: usize,
     caps: &mut Caps,
     k: &mut Cont,
 ) -> Option<usize> {
-    match node {
-        Node::Char(c) => {
-            if pos < input.len() && input[pos] == *c {
+    let node = &nodes.nodes[idx as usize];
+
+    match node.kind {
+        NodeKind::Char => {
+            let c = (node.left as u8) as char;
+            if pos < input.len() && input[pos] == c {
                 k(pos + 1, caps)
             } else {
                 None
             }
         }
 
-        Node::Any => {
+        NodeKind::Any => {
             if pos < input.len() && input[pos] != '\n' {
                 k(pos + 1, caps)
             } else {
@@ -72,7 +97,7 @@ fn match_node(
             }
         }
 
-        Node::Start => {
+        NodeKind::Start => {
             if pos == 0 {
                 k(pos, caps)
             } else {
@@ -80,7 +105,7 @@ fn match_node(
             }
         }
 
-        Node::End => {
+        NodeKind::End => {
             if pos == input.len() {
                 k(pos, caps)
             } else {
@@ -88,15 +113,20 @@ fn match_node(
             }
         }
 
-        Node::Class(ranges, negated) => {
+        NodeKind::Class => {
             if pos < input.len() {
                 let c = input[pos];
+                let negated = node.right != 0;
+                let (start, end) = range_bounds(nodes, node.left);
 
-                let in_class = ranges
-                    .iter()
-                    .any(|&(lo, hi)| c >= lo && c <= hi);
+                let in_class = (start..end).any(|i| {
+                    let pair = &nodes.nodes[i as usize];
+                    let lo = (pair.left as u8) as char;
+                    let hi = (pair.right as u8) as char;
+                    c >= lo && c <= hi
+                });
 
-                if in_class != *negated {
+                if in_class != negated {
                     return k(pos + 1, caps);
                 }
             }
@@ -104,24 +134,18 @@ fn match_node(
             None
         }
 
-        Node::Concat(nodes) => {
-            match_concat(
-                nodes,
-                0,
-                input,
-                pos,
-                caps,
-                k,
-            )
+        NodeKind::Concat => {
+            let (start, end) = range_bounds(nodes, node.left);
+            match_concat(nodes, start, end, input, pos, caps, k)
         }
 
-        Node::Alt(branches) => {
-            for b in branches {
+        NodeKind::Alt => {
+            let (start, end) = range_bounds(nodes, node.left);
+
+            for i in start..end {
                 let saved = caps.clone();
 
-                if let Some(end) =
-                    match_node(b, input, pos, caps, k)
-                {
+                if let Some(end) = match_node(nodes, i, input, pos, caps, k) {
                     return Some(end);
                 }
 
@@ -131,73 +155,55 @@ fn match_node(
             None
         }
 
-        Node::Group(inner, idx) => {
+        NodeKind::Group => {
+            let inner = node.left;
+            let group_idx = node.right as usize;
             let start = pos;
 
-            let mut capture_cont =
-                |end: usize, caps: &mut Caps| {
-                    caps[*idx] = Some((start, end));
-                    k(end, caps)
-                };
+            let mut capture_cont = |end: usize, caps: &mut Caps| {
+                caps[group_idx] = Some((start, end));
+                k(end, caps)
+            };
 
-            match_node(
-                inner,
-                input,
-                pos,
-                caps,
-                &mut capture_cont,
-            )
+            match_node(nodes, inner, input, pos, caps, &mut capture_cont)
         }
 
-        Node::Repeat(inner, min, max) => {
-            match_repeat(
-                inner,
-                *min,
-                *max,
-                input,
-                pos,
-                caps,
-                k,
-            )
+        NodeKind::Repeat => {
+            let inner = node.left;
+            let (min_raw, max_raw) = range_bounds(nodes, node.right);
+            let min = min_raw as usize;
+            let max = if max_raw < 0 { None } else { Some(max_raw as usize) };
+
+            match_repeat(nodes, inner, min, max, input, pos, caps, k)
         }
+
+        // Range / Nodes / Flag は他ノードの補助データであり、
+        // それ単体がマッチング対象になることはない。
+        NodeKind::Range | NodeKind::Nodes | NodeKind::Flag => None,
     }
 }
 
 fn match_concat(
-    nodes: &[Node],
-    i: usize,
+    nodes: &Nodes,
+    i: i64,
+    end: i64,
     input: &[char],
     pos: usize,
     caps: &mut Caps,
     k: &mut Cont,
 ) -> Option<usize> {
-    if i == nodes.len() {
+    if i == end {
         return k(pos, caps);
     }
 
-    let mut kk =
-        |p: usize, caps: &mut Caps| {
-            match_concat(
-                nodes,
-                i + 1,
-                input,
-                p,
-                caps,
-                k,
-            )
-        };
+    let mut kk = |p: usize, caps: &mut Caps| match_concat(nodes, i + 1, end, input, p, caps, k);
 
-    match_node(
-        &nodes[i],
-        input,
-        pos,
-        caps,
-        &mut kk,
-    )
+    match_node(nodes, i, input, pos, caps, &mut kk)
 }
 
 fn match_repeat(
-    inner: &Node,
+    nodes: &Nodes,
+    inner: i64,
     min: usize,
     max: Option<usize>,
     input: &[char],
@@ -206,7 +212,8 @@ fn match_repeat(
     k: &mut Cont,
 ) -> Option<usize> {
     fn go(
-        inner: &Node,
+        nodes: &Nodes,
+        inner: i64,
         count: usize,
         min: usize,
         max: Option<usize>,
@@ -220,34 +227,16 @@ fn match_repeat(
         if max.map_or(true, |m| count < m) {
             let saved = caps.clone();
 
-            let mut kk =
-                |p: usize, caps: &mut Caps| {
-                    if p == pos && count >= min {
-                        // 空文字マッチで無限ループするのを防ぐ
-                        return None;
-                    }
+            let mut kk = |p: usize, caps: &mut Caps| {
+                if p == pos && count >= min {
+                    // 空文字マッチで無限ループするのを防ぐ
+                    return None;
+                }
 
-                    go(
-                        inner,
-                        count + 1,
-                        min,
-                        max,
-                        input,
-                        p,
-                        caps,
-                        k,
-                    )
-                };
+                go(nodes, inner, count + 1, min, max, input, p, caps, k)
+            };
 
-            if let Some(end) =
-                match_node(
-                    inner,
-                    input,
-                    pos,
-                    caps,
-                    &mut kk,
-                )
-            {
+            if let Some(end) = match_node(nodes, inner, input, pos, caps, &mut kk) {
                 return Some(end);
             }
 
@@ -261,14 +250,5 @@ fn match_repeat(
         None
     }
 
-    go(
-        inner,
-        0,
-        min,
-        max,
-        input,
-        pos,
-        caps,
-        k,
-    )
+    go(nodes, inner, 0, min, max, input, pos, caps, k)
 }

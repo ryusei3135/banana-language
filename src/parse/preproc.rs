@@ -6,9 +6,8 @@ use std::sync::OnceLock;
 /// `gen_asm_line`は`#asm`ブロックの行ごとに呼ばれるため、毎回
 /// `Regex::new`でコンパイルすると無駄なコストがかかる。
 /// `OnceLock`で最初の1回だけコンパイルし、以降は使い回す。
-fn inline_var_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\$\{([^}]+)\}").unwrap())
+fn inline_var_regex() -> Regex {
+    Regex::new(r"\$\{([^}]+)\}").unwrap()
 }
 
 impl Parser {
