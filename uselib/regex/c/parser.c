@@ -2,7 +2,7 @@
 
 
 
-static CharOpt peek(Parser *this) {
+CharOpt peek(Parser *this) {
     OpKind kind = Some;
     if (this->pos >= this->chars_len)
         kind = None;

@@ -79,6 +79,8 @@ typedef struct Parser Parser;
 typedef struct CharOpt CharOpt;
 typedef struct CharResult CharResult;
 
+CharOpt peek(Parser *this);
+
 // asm/chr.s
 char change_byte_chr(volatile Parser *);
 int is_byte_digit(char);
