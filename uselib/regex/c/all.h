@@ -31,7 +31,7 @@ struct CharOpt
 struct CharResult {
     union {
         char ok;
-        char err[256];
+        char* err;
     };
     ResultKind kind;
 };
@@ -40,7 +40,7 @@ struct CharResult {
 typedef struct NodeResult {
     union {
         long ok;
-        char err[256];
+        char* err;
     };
     ResultKind kind;
 } NodeResult;
@@ -83,6 +83,17 @@ typedef struct Parser Parser;
 typedef struct CharOpt CharOpt;
 typedef struct CharResult CharResult;
 
+
+
+/* mem/allocator.c の自前アロケータ。
+   修正: 以前はここで libc 互換の `malloc`/`free` という名前で
+   プロトタイプを宣言していたが、そのシグネチャのまま静的リンクすると
+   Rust 標準ライブラリの内部確保まで乗っ取ってしまい、
+   allocator_init() 未呼び出し状態で即 OOM abort する事故につながった。
+   衝突しない名前 (mem_malloc/mem_free) を使う。 */
+void *mem_malloc(long size);
+void mem_free(void *ptr);
+
 CharOpt peek(Parser *this);
 
 // c/parser.c
@@ -94,6 +105,7 @@ void parser_drop(Parser *self);
 // asm/chr.s
 char change_byte_chr(volatile Parser *);
 int is_byte_digit(char);
+int get_strlen(const char*);
 int simd_strcpy(char*, const char*);
 int parse_num(const char* start, const char* end);
 
@@ -104,6 +116,7 @@ char* shorthand_class_ranges(char);
 // c/result.c
 NodeResult ok_val(long len);
 NodeResult make_err_result(char *msg);
+void view_err_msg(NodeResult *val);
 
 // c/node.c
 /* 修正: 元は `Nodes ini_nodes();` で構造体を値渡し(約49KB)で返していた。

@@ -1,13 +1,5 @@
 #include "all.h"
 
-/* mem/allocator.c の自前アロケータ。
-   修正: 以前はここで libc 互換の `malloc`/`free` という名前で
-   プロトタイプを宣言していたが、そのシグネチャのまま静的リンクすると
-   Rust 標準ライブラリの内部確保まで乗っ取ってしまい、
-   allocator_init() 未呼び出し状態で即 OOM abort する事故につながった。
-   衝突しない名前 (mem_malloc/mem_free) を使う。 */
-void *mem_malloc(long size);
-void mem_free(void *ptr);
 
 
 CharOpt peek(Parser *this) {
@@ -90,8 +82,10 @@ NodeResult parse_alt(Parser *self, Nodes *nodes);
 
 #define PushNode(E)\
     NodeResult __r = E;\
-    if (__r.kind == Err)\
+    if (__r.kind == Err) {\
+        view_err_msg(&__r);\
         return __r;\
+    }\
     push_node(nodes, nodes->nodes[__r.ok]);
 
     
@@ -139,27 +133,20 @@ NodeResult parse_alt(
     Nodes *restrict nodes
 ) {
     long start = nodes->len;
+    int branch_count = 0;
 
-    /* 修正: 最初の枝も他の枝と同様に nodes に積む（元コードは積んでいなかった） */
     PushNode(parse_concat(self, nodes));
+    branch_count++;
 
     while (match_chr(self, '|')) {
         bump(self);
         PushNode(parse_concat(self, nodes));
+        branch_count++;
     }
 
-    /* 修正: グローバルな nodes->len ではなく、この parse_alt 呼び出しで
-       追加された枝の数（差分）で「分岐が1つだけか」を判定する */
-    if (nodes->len - start == 1) {
-        /* 修正: ここで free(self->chars) していたが、parse_alt は
-           "(...)" グループのたびに再帰されるため、ネストしたグループの
-           数だけ同じポインタに対して free() が呼ばれてしまい
-           二重解放 (double free) になっていた。解放は一番外側の
-           呼び出し元が「パース完了後に1回だけ」行うべきなので、
-           ここでは何もせず ok_val を返すだけにする。
-           (解放は parser_drop() を参照) */
+    if (branch_count == 1)
         return ok_val(pop_node(nodes));
-    } else {
+    else {
         long idx = make_range_pair(nodes, start, nodes->len);
         long alt_idx = make_alt_node(nodes, idx);
         return ok_val(alt_idx);
@@ -183,9 +170,11 @@ static NodeResult parse_concat(
     Nodes *restrict nodes
 ) {
     long nodes_start = nodes->len;
-    while (peek(self).kind == Some) {
-        char c = *peek(self).value;
-        if (c == '|' || c == ')')
+    for (;;) {
+        CharOpt r = peek(self);
+        if (r.kind == None)
+            break;
+        if (*r.value == '|' || *r.value == ')')
             break;
         PushNode(parse_repeat(self, nodes));
     }
@@ -411,12 +400,14 @@ static NodeResult parse_class(
 
         first = 0;
 
+        CharOpt result = peek2(self);
+        char c = *result.value;
         if (match_chr(self, '\\')
-            && peek2(self).kind == Some
+            && result.kind == Some
             && (
-                *peek2(self).value == 'd' 
-                || *peek2(self).value == 'w' 
-                || *peek2(self).value == 's'
+                c == 'd' 
+                || c == 'w' 
+                || c == 's'
             ))
         {
             bump(self);
@@ -459,9 +450,8 @@ static NodeResult parse_class(
                 return err;
             }
             make_range_pair(nodes, c1, r2.ok);
-        } else {
+        } else
             make_range_pair(nodes, c1, c1);
-        }
     }
 
     long range_idx = make_range_pair(nodes, ranges_start, nodes->len);

@@ -163,7 +163,6 @@ impl Parser {
                 }
             })
             .to_owned();
-
         if let Some(e) = parse_err {
             return Err(e);
         }

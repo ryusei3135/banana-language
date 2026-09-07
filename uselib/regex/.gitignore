@@ -3,3 +3,4 @@ build
 *.lock
 *.o
 *.a
+__pycache__

@@ -65,22 +65,19 @@ impl Regex {
             );
             let nodes: &'static mut Nodes = ini_nodes();
             let result = parse_alt(&mut parser, nodes);
-            // 修正: parse_alt の中(再帰呼び出しのたび)で free していたため
-            // ネストしたグループのある正規表現で二重解放になっていた。
-            // パターン文字列バッファはここ、一番外側の呼び出しが完全に
-            // 終わった直後に一度だけ解放する。
             parser_drop(&mut parser);
+
+            let root = match result.kind {
+                ResultKind::Ok => result.v.ok,
+                ResultKind::Err => return Err(RegexError(cstr_to_string(result.v.err))),
+            };
+
             if parser.pos < parser.chars_len {
                 return Err(RegexError(format!(
                     "予期しない文字が {} 文字目にあります",
                     parser.pos
                 )));
             }
-
-            let root = match result.kind {
-                ResultKind::Ok => result.v.ok,
-                ResultKind::Err => return Err(RegexError(cstr_to_string(result.v.err))),
-            };
 
             Ok(Regex {
                 nodes,

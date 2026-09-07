@@ -3,11 +3,14 @@
 .global is_byte_digit
 .global simd_strcpy
 .global parse_num
+.global get_strlen
 
 .type change_byte_chr, @function
 .type is_byte_digit, @function
 .type simd_strcpy, @function
 .type parse_num, @function
+.type get_strlen, @function
+
 
 .extern peek
 .type peek, @function
@@ -65,6 +68,24 @@ is_byte_digit:
     leave
     ret
 
+
+// int (const char* msg)
+get_strlen:
+    pushq %rbp
+    movq %rsp, %rbp
+    xorl %eax, %eax
+    movq %rdi, (%rsp)
+.L0:
+    movb (%rdi), %cl
+    cmpb $0, %cl
+    jz .E0
+    incl %eax
+    incq %rdi
+    jmp .L0
+.E0:
+    movq (%rsp), %rdi
+    leave
+    ret
 
 simd_strcpy:
     pushq %rbp
@@ -154,7 +175,7 @@ parse_num:
     cmpq %rsi, %rdi          # start == end の場合は即終了
     jae .L_done1
     # 最初の文字が '-'（マイナス）かチェック
-    movzbl  (%rdi), %edx
+    movzbl (%rdi), %edx
     cmpb $45, %dl            # '-' の ASCII コードは 45
     jne .L_loop_digits
     movl $1, %ecx

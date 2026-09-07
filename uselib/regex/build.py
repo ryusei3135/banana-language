@@ -59,24 +59,23 @@ def files_com(file_list):
 
         objects.append(obj)
 
-[files_com(f) for f in file_lists]
 
-print("Objects:")
-[print("  ", obj) for obj in objects]
+def compile_c_program():
+    [files_com(f) for f in file_lists]
+    print("Objects:")
+    [print("  ", obj) for obj in objects]
+    if not objects:
+        raise RuntimeError(
+            f"No C or Assembly files found in {SRC_C}"
+        )
+    print("files *.o", objects)
+    # static library
+    subprocess.run([
+        "ar",
+        "rcs",
+        str(BUILD / "libregex.a"),
+        *map(str, objects),
+    ], check=True)
+    print("libregex.a created")
 
-if not objects:
-    raise RuntimeError(
-        f"No C or Assembly files found in {SRC_C}"
-    )
-
-print("files *.o", objects)
-
-# static library
-subprocess.run([
-    "ar",
-    "rcs",
-    str(BUILD / "libregex.a"),
-    *map(str, objects),
-], check=True)
-
-print("libregex.a created")
+compile_c_program()
