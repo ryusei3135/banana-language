@@ -23,7 +23,7 @@ change_byte_chr:
     movq %rdi, (%rsp)
     call peek
     movq (%rsp), %rdi
-    
+
     movzbl %al, %ecx           # %eaxの下位1バイト(value)を %ecx にゼロ拡張でコピー
     # \\n
     cmpl $110, %ecx

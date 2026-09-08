@@ -168,7 +168,7 @@ impl Parser {
                 Ok(expr) => {
                     let index = operands.len();
                     println!("{:?}", expr);
-                    // operands.push(expr);
+                    operands.push(expr);
                     format!("{{{}}}", index)
                 }
                 Err(e) => {
