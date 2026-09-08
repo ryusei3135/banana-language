@@ -16,10 +16,18 @@ pub struct MngAsmFmt {
 }
 
 impl MngAsmFmt {
-    pub fn new(asm_setting: asm_setting::AsmSetting, asm_fmt: asm_setting::AsmFormat) -> Self {
+    pub fn new(
+        asm_setting: asm_setting::AsmSetting, 
+        asm_fmt: asm_setting::AsmFormat
+    ) -> Self {
         // === アセンブラのフォーマットの設定 ===
         Self {
-            param_fmt: asm_fmt.args.fmt.get("linux").unwrap().clone(),
+            param_fmt: asm_fmt
+                .args
+                .fmt
+                .get("linux")
+                .unwrap()
+                .clone(),
             reg_fmt: asm_fmt.reg.clone(),
             opcode_fmt: asm_fmt.op.clone(),
             asm_setting: Some(asm_setting),
@@ -38,10 +46,17 @@ impl MngAsmFmt {
     /// - usizeの場合はレジスタの番号が返される
     /// ## 引数
     /// - param_idx = 引数の場所
-    pub fn get_fmt_param<R: 'static>(&self, param_idx: &usize, size: Size) -> R {
+    pub fn get_fmt_param<R: 'static>(
+        &self, 
+        param_idx: &usize, 
+        size: Size
+    ) -> R {
         if TypeId::of::<R>() == TypeId::of::<String>() {
             let result: Box<dyn Any> = Box::new(
-                self.get_fmt_reg(&self.param_fmt[*param_idx], &size)
+                self.get_fmt_reg(
+                        &self.param_fmt[*param_idx], 
+                        &size
+                    )
                     .to_string(),
             );
             result.downcast::<R>().ok().map(|b| *b).unwrap()
@@ -49,7 +64,7 @@ impl MngAsmFmt {
             let result: Box<dyn Any> = Box::new(self.param_fmt[*param_idx]);
             result.downcast::<R>().ok().map(|b| *b).unwrap()
         } else {
-            panic!("この型は無効です,");
+            panic!("この型は無効です,")
         }
     }
 

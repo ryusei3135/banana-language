@@ -21,14 +21,21 @@ void exit_me(void) {
 #endif
 
 Nodes* ini_nodes() {
-    static Nodes n = {
-        {0},
-        0,
-        0,
-        MaxLen,
-    };
-    n.pos = n.nodes;
-    return &n;
+    /* 修正: 以前は関数内 static な単一バッファを全 Regex インスタンスで
+       共有していたため、ある Regex を生かしたまま別の Regex::new を
+       呼ぶと、後からコンパイルされたパターンが前のパターンの AST を
+       上書きしてしまっていた (root インデックスは変わらないのに
+       中身だけ差し替わる)。ヒープに毎回新しい領域を確保し、
+       Regex ごとに独立したノード配列を持たせるように変更する。 */
+    Nodes *n = (Nodes *)mem_malloc((long)sizeof(Nodes));
+    n->pos = n->nodes;
+    n->len = 0;
+    n->max_len = MaxLen;
+    return n;
+}
+
+void nodes_drop(Nodes *n) {
+    mem_free(n);
 }
 
 void push_node(Nodes *nodes, Node new_node) {
@@ -40,6 +47,7 @@ void push_node(Nodes *nodes, Node new_node) {
 }
 
 long pop_node(Nodes *nodes) {
+    nodes->pos--;
     return nodes->len - 1;
 }
 

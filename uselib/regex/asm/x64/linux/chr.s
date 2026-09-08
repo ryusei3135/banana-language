@@ -104,24 +104,33 @@ simd_strcpy:
     cmpq $0xfe0, %rax
     ja .L_scalar
     vmovdqu (%rsi), %ymm0
+
     # NULL byteを探す
     vpcmpeqb %ymm1, %ymm0, %ymm2
+
     # 各byteの比較結果をbit maskへ
     vpmovmskb %ymm2, %eax
+
     testl %eax, %eax
     jnz .L_found_null
+
     # NULLがなければ32byteコピー
     vmovdqu %ymm0, (%rdi)
+
     addq $32, %rsi
     addq $32, %rdi
+
     jmp .L_loop
 .L_scalar:
     movb (%rsi), %al
     movb %al, (%rdi)
+
     incq %rsi
     incq %rdi
+
     testb %al, %al
     jnz .L_loop
+
     jmp .L_done
 .L_found_null:
     # 最初のNULLの位置

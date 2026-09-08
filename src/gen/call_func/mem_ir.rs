@@ -42,13 +42,6 @@ impl AsmEmitter {
                 self.asm_text.push_str(
                     ini_asm.as_str()
                 );
-                // 登録する変数名は`Inst::Struct`自身が持つ`name`
-                // (構造体の型名、例:`Name`)ではなく、この`Mov`が
-                // 束縛しようとしている変数名(`a: Name = Name { .. }`
-                // の`a`、関数の引数として受け取った`name`)である
-                // 必要がある。以前はここで`if let`のパターンにより
-                // `name`がシャドーイングされ、型名を変数名として
-                // 誤って登録してしまっていた
                 if let Some(var_name) = name {
                     self.insert_var_info(
                         var_name,
@@ -90,14 +83,6 @@ impl AsmEmitter {
             // ない場合のみ、変数名だけを登録する(この場合は変数の
             // 実体が静的領域そのものであり、レジスタへ値をロード
             // する必要がないため)。
-            //
-            // 以前はここがポインタ型かどうかを見ていなかったため、
-            // `c: byte* = "hello world"`のように文字列リテラルを
-            // ポインタ型の変数へ代入した場合も、この分岐に入って
-            // しまい、文字列のアドレスをレジスタへロードする命令が
-            // 一切出力されず、`c`がポインタとして扱われなかった
-            // (`c`を参照する箇所が、値の入っていないレジスタを
-            //  読んでしまう不具合になっていた)
             self.insert_var_info(
                 &name.as_ref().unwrap(),
                 asm_emitter::VarIndexInfo::new(&self.reg_idx, &size, dst),
@@ -126,13 +111,6 @@ impl AsmEmitter {
                 self.asm_fmt.fmt_mnemonic_resize("mov", &text, &Size::DQ)
             } else {
                 // メモリのポインタか、値かで、ニーモニックが変わる
-                //
-                // `c: byte* = "hello world"`のように、文字列リテラル
-                // (静的領域に置かれたデータ)のアドレスをポインタ型の
-                // 変数へ束縛する場合もここを通る。`size.is_pointer()`
-                // が`Some`であれば、srcがdata_map上の値であっても
-                // 常に`address`(=`lea`)を使い、実際にそのアドレスを
-                // レジスタへ計算して書き込む
                 let mnemonic = if size.is_pointer().is_some() {
                     // ポインタの場合
                     "address"
@@ -164,7 +142,11 @@ impl AsmEmitter {
         }
     }
 
-    pub(super) fn mem_value_ir(&mut self, mem_value: &inst::MemoryInst, this_is_self: bool) {
+    pub(super) fn mem_value_ir(
+        &mut self, 
+        mem_value: &inst::MemoryInst, 
+        this_is_self: bool
+    ) {
         match mem_value {
             inst::MemoryInst::Memory {
                 name,
@@ -176,26 +158,14 @@ impl AsmEmitter {
                 if kind == &inst::MemoryKind::Static {
                     self.is_static_var(src, size, &dst, name, this_is_self);
                 } else {
-                    // スタック領域のローカル変数を作成する
-                    //
-                    // `dst`が新しく確保するローカル変数のスロット
-                    // ではなく、`self`(メソッドの第一引数として
-                    // 渡されるポインタ、`%rdi`など)や`[p]`のような
-                    // 既存のメモリを指している場合(例:
-                    // `ret Self { c: {0, 1, 2} }`のように構造体
-                    // リテラルの配列フィールドを構築する場合)は、
-                    // 独立したローカルの一時領域(`%rbp`基準)を
-                    // 新しく確保するのではなく、そのメモリへ
-                    // 直接書き込む必要がある。
-                    // 以前はここで`dst`を全く見ずに常に`%rbp`
-                    // 決め打ちでオペランドを組み立てていたため、
-                    // このようなケースでも誤ってローカルの
-                    // 一時領域に書き込まれてしまっていた。
                     let base = match &self.curr_inst[*dst] {
                         inst::Inst::Pointer(..)
                         | inst::Inst::Param(..)
                         | inst::Inst::GetPtr { .. } => {
-                            self.extract_operand_text(&dst, this_is_self)
+                            self.extract_operand_text(
+                                &dst, 
+                                this_is_self
+                            )
                         }
                         _ => "%rbp".to_string(),
                     };
@@ -223,7 +193,11 @@ impl AsmEmitter {
                     }
                     self.insert_var_info(
                         &name,
-                        asm_emitter::VarIndexInfo::new(&self.reg_idx, &size, dst),
+                        asm_emitter::VarIndexInfo::new(
+                            &self.reg_idx, 
+                            &size, 
+                            dst
+                        ),
                     );
                     self.asm_text.push_str(txt.as_str());
                 }

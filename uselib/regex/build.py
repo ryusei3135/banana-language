@@ -16,6 +16,7 @@ import uselib.mem.mem as Mem
 SRC_C = ROOT / "c"
 BUILD = ROOT
 SRC_A = ROOT / "asm" / "x64" if sys.argv[1] == "x64" else ROOT / "asm" / "arm64"
+SRC_A = SRC_A / "linux"
 
 BUILD.mkdir(exist_ok=True)
 

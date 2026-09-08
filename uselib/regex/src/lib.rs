@@ -2,6 +2,7 @@ use std::error::Error;
 use std::fmt;
 
 mod regex;
+mod test;
 
 pub use regex::Captures;
 pub use regex::Regex;
@@ -9,6 +10,7 @@ pub use regex::Regex;
 // ============================== AST ==============================
 
 #[repr(C)]
+#[derive(Debug)]
 pub enum NodeKind {
     Char,
     Any,
@@ -26,6 +28,7 @@ pub enum NodeKind {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct Node {
     pub kind: NodeKind,
     pub left: i64,
@@ -33,6 +36,7 @@ pub struct Node {
 }
 
 #[repr(C)]
+#[derive(Debug)]
 pub struct Nodes {
     pub nodes: [Node; 2048],
     pub pos: *mut Node,
@@ -78,6 +82,9 @@ fn match_node(
     caps: &mut Caps,
     k: &mut Cont,
 ) -> Option<usize> {
+    if idx >= nodes.len {
+        panic!("jjjj");
+    }
     let node = &nodes.nodes[idx as usize];
 
     match node.kind {
@@ -89,7 +96,6 @@ fn match_node(
                 None
             }
         }
-
         NodeKind::Any => {
             if pos < input.len() && input[pos] != '\n' {
                 k(pos + 1, caps)
@@ -97,7 +103,6 @@ fn match_node(
                 None
             }
         }
-
         NodeKind::Start => {
             if pos == 0 {
                 k(pos, caps)
@@ -105,7 +110,6 @@ fn match_node(
                 None
             }
         }
-
         NodeKind::End => {
             if pos == input.len() {
                 k(pos, caps)
@@ -113,7 +117,6 @@ fn match_node(
                 None
             }
         }
-
         NodeKind::Class => {
             if pos < input.len() {
                 let c = input[pos];
@@ -134,12 +137,10 @@ fn match_node(
 
             None
         }
-
         NodeKind::Concat => {
             let (start, end) = range_bounds(nodes, node.left);
             match_concat(nodes, start, end, input, pos, caps, k)
         }
-
         NodeKind::Alt => {
             let (start, end) = range_bounds(nodes, node.left);
 
@@ -155,7 +156,6 @@ fn match_node(
 
             None
         }
-
         NodeKind::Group => {
             let inner = node.left;
             let group_idx = node.right as usize;
@@ -168,7 +168,6 @@ fn match_node(
 
             match_node(nodes, inner, input, pos, caps, &mut capture_cont)
         }
-
         NodeKind::Repeat => {
             let inner = node.left;
             let (min_raw, max_raw) = range_bounds(nodes, node.right);
@@ -177,7 +176,6 @@ fn match_node(
 
             match_repeat(nodes, inner, min, max, input, pos, caps, k)
         }
-
         // Range / Nodes / Flag は他ノードの補助データであり、
         // それ単体がマッチング対象になることはない。
         NodeKind::Range | NodeKind::Nodes | NodeKind::Flag => None,

@@ -127,6 +127,7 @@ void view_err_msg(NodeResult *val);
    その隠しポインタを渡さないため、C側は不定値の RDI へ 49KB を
    memcpy してしまい、確実にクラッシュする。ポインタを返す形に修正。 */
 Nodes* ini_nodes();
+void nodes_drop(Nodes *nodes);
 void push_node(Nodes *nodes, Node new_node);
 long pop_node(Nodes *nodes);
 long make_range_pair(Nodes *nodes, long start, long end);

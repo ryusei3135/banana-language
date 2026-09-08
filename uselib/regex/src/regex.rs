@@ -37,18 +37,39 @@ pub struct NodeResult {
 
 
 unsafe extern "C" {
-    pub fn ini_nodes() -> &'static mut Nodes;
+    // 修正: 以前は ini_nodes() が全 Regex インスタンスで共有される
+    // 単一の 'static バッファを返しており、ある Regex を生かしたまま
+    // 別の Regex::new を呼ぶと AST を互いに上書きしてしまっていた。
+    // C 側 (c/node.c) を「呼ぶたびに新規ヒープ確保する」実装に変更し、
+    // ここでも 'static ではなく Regex インスタンスが専有する生ポインタ
+    // として扱う。対応する nodes_drop で解放する。
+    pub fn ini_nodes() -> *mut Nodes;
+    pub fn nodes_drop(n: *mut Nodes);
 
     pub fn parse_new(pattern: *const u8, len: i64) -> Parser;
     pub fn parse_alt(p: *mut Parser, n: *mut Nodes) -> NodeResult;
     pub fn parser_drop(p: *mut Parser);
 }
 
-
+#[derive(Debug)]
 pub struct Regex {
-    nodes: &'static Nodes,
+    nodes: *mut Nodes,
     root: i64,
     group_count: usize,
+}
+
+// Regex は自身専有の Nodes ヒープ領域を持つだけで、他インスタンスと
+// 共有される可変状態は持たない。ノード列はコンパイル後に書き換わらない
+// ため、複数スレッドから &Regex を共有して読むだけなら安全。
+unsafe impl Send for Regex {}
+unsafe impl Sync for Regex {}
+
+impl Drop for Regex {
+    fn drop(&mut self) {
+        unsafe {
+            nodes_drop(self.nodes);
+        }
+    }
 }
 
 impl Regex {
@@ -63,16 +84,23 @@ impl Regex {
                 c_pattern.as_ptr() as *const u8, 
                 pattern.bytes().len() as i64
             );
-            let nodes: &'static mut Nodes = ini_nodes();
+            let nodes: *mut Nodes = ini_nodes();
             let result = parse_alt(&mut parser, nodes);
             parser_drop(&mut parser);
 
             let root = match result.kind {
                 ResultKind::Ok => result.v.ok,
-                ResultKind::Err => return Err(RegexError(cstr_to_string(result.v.err))),
+                ResultKind::Err => {
+                    // Regex を作らずに抜けるので、確保済みの nodes は
+                    // ここで解放しないとリークする。
+                    let msg = cstr_to_string(result.v.err);
+                    nodes_drop(nodes);
+                    return Err(RegexError(msg));
+                }
             };
 
             if parser.pos < parser.chars_len {
+                nodes_drop(nodes);
                 return Err(RegexError(format!(
                     "予期しない文字が {} 文字目にあります",
                     parser.pos
@@ -91,10 +119,18 @@ impl Regex {
     /// 見つかれば各キャプチャグループの (開始, 終了) 文字インデックスを返す。
     /// 添字 0 が全体マッチに対応する。
     fn find_at(&self, chars: &[char], start: usize) -> Option<Caps> {
+        // self.nodes はこの Regex インスタンスが専有するヒープ領域への
+        // ポインタで、Regex の生存中は nodes_drop されないため参照化して安全。
+        let nodes: &Nodes = unsafe { &*self.nodes };
+        // でバック用
+        // dbg!("JJJJJJJJJJJJ");
+        // for i in 0..10 {
+        //     dbg!(&nodes.nodes[i]);
+        // }
         for pos in start..=chars.len() {
             let mut caps: Caps = vec![None; self.group_count + 1];
             let mut k: Box<Cont> = Box::new(|end, _caps: &mut Caps| Some(end));
-            if let Some(end) = match_node(self.nodes, self.root, chars, pos, &mut caps, &mut *k) {
+            if let Some(end) = match_node(nodes, self.root, chars, pos, &mut caps, &mut *k) {
                 caps[0] = Some((pos, end));
                 return Some(caps);
             }
@@ -106,7 +142,11 @@ impl Regex {
     /// `replacer` には次の2種類を渡せる:
     ///   - `&str` : `$1`, `$2`, ... / `$$` を使ったテンプレート (`Captures::replace_all` に委譲)
     ///   - `FnMut(&Captures) -> String` のクロージャ : マッチ毎に呼ばれ、戻り値で置き換える
-    pub fn replace_all<R: Replacer>(&self, text: &str, mut replacer: R) -> String {
+    pub fn replace_all<R: Replacer>(
+        &self, 
+        text: &str, 
+        mut replacer: R
+    ) -> String {
         let chars: Vec<char> = text.chars().collect();
         let char_to_byte = build_char_to_byte(text);
 

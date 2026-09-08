@@ -1,3 +1,5 @@
+use crate::err::{ErrKind, lex_err::LexErrKind};
+
 use super::*;
 use regex::{Captures, Regex};
 use std::sync::OnceLock;
@@ -41,7 +43,9 @@ impl Parser {
         Ok(result)
     }
 
-    fn build_mod_path(&mut self) -> Result<node::ModPath, err::ErrKind> {
+    fn build_mod_path(
+        &mut self
+    ) -> Result<node::ModPath, err::ErrKind> {
         enum PathTkn {
             Name,
             PathTkn,
@@ -52,7 +56,10 @@ impl Parser {
             match self.next_tkn_ref(vec!["name", "::", ".."])? {
                 lex::Tkn::Name(name) => {
                     // 前回のトークンの種類が、無いまたは、"::"の場合だけ実行
-                    if flag.as_ref().is_none_or(|v| matches!(v, PathTkn::PathTkn)) {
+                    if flag
+                        .as_ref()
+                        .is_none_or(|v| matches!(v, PathTkn::PathTkn)) 
+                    {
                         mod_path.add_path(&name);
                         flag = Some(PathTkn::Name);
                     } else {
@@ -64,7 +71,10 @@ impl Parser {
                     flag = Some(PathTkn::PathTkn);
                 }
                 _ => {
-                    if flag.as_ref().is_some_and(|v| matches!(v, PathTkn::Name)) {
+                    if flag
+                        .as_ref()
+                        .is_some_and(|v| matches!(v, PathTkn::Name))
+                    {
                         break;
                     } else {
                         crate::preproc_err!(self, ExpectedPathSegment);
@@ -78,7 +88,9 @@ impl Parser {
 
     /// ## 戻り値
     /// - Ok inlineアセンブラの名前
-    fn build_asm_ast(&mut self) -> Result<node::Group2Node, err::ErrKind> {
+    fn build_asm_ast(
+        &mut self
+    ) -> Result<node::Group2Node, err::ErrKind> {
         // #asm(...)なので、(以外が来たらエラー
         if !matches!(self.next_tkn(vec!["not `(`"])?, lex::Tkn::LParen) {
             crate::preproc_err!(self, ExpectedLParenAfterAsm);
@@ -100,7 +112,9 @@ impl Parser {
 
     /// アセンブリ言語のプロプロセッサの
     /// 中身(アセンブリ言語本体)を生成する関数
-    fn gen_asm_preproc(&mut self) -> Result<Vec<node::InlineAsm>, err::ErrKind> {
+    fn gen_asm_preproc(
+        &mut self
+    ) -> Result<Vec<node::InlineAsm>, err::ErrKind> {
         let mut nodes = Vec::<node::InlineAsm>::new();
 
         if matches!(self.next_tkn(vec!["{"])?, lex::Tkn::LBrace) {
@@ -133,38 +147,38 @@ impl Parser {
     /// 普通の式として書けるもの)は`operands`に出現順で積んでいく。
     /// 同じ行に複数の`${...}`があっても、すべて取り込む
     /// (以前の実装は最後の1つしか保持できなかった)。
-    fn gen_asm_line(&mut self, value: &String) -> Result<node::InlineAsm, err::ErrKind> {
-        // `${...}`を検出する正規表現(最初の1回だけコンパイルし、以降は使い回す)
-        let inline_var = inline_var_regex();
+    fn gen_asm_line(
+        &mut self, 
+        value: &String
+    ) -> Result<node::InlineAsm, err::ErrKind> {
+        let inline_var = Regex::new(r"\$\{([^}]+)\}").unwrap(); // 一度だけコンパイルして使い回してOK
 
         let mut operands = Vec::<node::Expr>::new();
-        // クロージャの中では`?`が使えないので、エラーはここに一旦入れておく
         let mut parse_err: Option<err::ErrKind> = None;
 
-        let asm = inline_var
-            .replace_all(value, |caps: &Captures| {
-                if parse_err.is_some() {
-                    // すでにエラーが起きているので、これ以上解析しても意味が無い
-                    return String::new();
-                }
+        let asm = inline_var.replace_all(value, |caps: &Captures| {
+            if parse_err.is_some() {
+                return String::new();
+            }
+            let inner = &caps[1]; // ← 正しく "reg_a" 等が取れる
 
-                let inner = &caps[1];
-
-                match Parser::parse_asm_operand(inner) {
-                    Ok(expr) => {
-                        let index = operands.len();
-                        operands.push(expr);
-                        format!("{{{}}}", index)
-                    }
-                    Err(e) => {
-                        parse_err = Some(e);
-                        String::new()
-                    }
+            // このクロージャの中で別の Regex::new を呼んでも、
+            // もう inline_var のノード領域を破壊しない
+            match Parser::parse_asm_operand(inner) {
+                Ok(expr) => {
+                    let index = operands.len();
+                    println!("{:?}", expr);
+                    // operands.push(expr);
+                    format!("{{{}}}", index)
                 }
-            })
-            .to_owned();
+                Err(e) => {
+                    parse_err = Some(e);
+                    String::new()
+                }
+            }
+        });
         if let Some(e) = parse_err {
-            return Err(e);
+            panic!("KKKKKK {:?}", e);
         }
 
         Ok(node::InlineAsm { asm, operands })
@@ -187,11 +201,13 @@ mod inline_asm_tests {
         let nodes = p.parser(lexer.gen_tkns).expect("parse failed");
 
         let node::Group1Node::FuncDefine(func) = &nodes[0] else {
-            panic!("not a func define");
+            panic!("not a func define")
         };
 
-        let node::Group2Node::CompleSyntax((name, lines)) = &func.body[0] else {
-            panic!("not an inline asm node: {:?}", func.body[0]);
+        let node::Group2Node::CompleSyntax(
+            (name, lines)
+        ) = &func.body[0] else {
+            panic!("not an inline asm node: {:?}", func.body[0])
         };
         assert_eq!(name, "gas");
         lines.clone()
