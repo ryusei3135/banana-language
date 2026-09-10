@@ -96,8 +96,12 @@ void mem_free(void *ptr);
 
 CharOpt peek(Parser *this);
 
+typedef char R[2];
+// asm/range.s
+R* shorthand_class_ranges(char);
+
 // c/parser.c
-Parser parse_new(const char* pattern, long len);
+Parser *parse_new(const char* pattern, long len);
 NodeResult parse_alt(Parser *self, Nodes *nodes);
 void parser_drop(Parser *self);
 
@@ -108,9 +112,6 @@ int is_byte_digit(char);
 int get_strlen(const char*);
 int simd_strcpy(char*, const char*);
 int parse_num(const char* start, const char* end);
-
-// asm/range.s
-char* shorthand_class_ranges(char);
 
 
 // c/result.c

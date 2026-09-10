@@ -167,7 +167,7 @@ impl Parser {
             match Parser::parse_asm_operand(inner) {
                 Ok(expr) => {
                     let index = operands.len();
-                    println!("{:?}", expr);
+                    println!("exprs inline asm {:?}", expr);
                     operands.push(expr);
                     format!("{{{}}}", index)
                 }

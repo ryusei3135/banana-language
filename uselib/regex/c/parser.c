@@ -88,7 +88,12 @@ static char unmatch_bump(
     T result = {.ok = c, Ok};\
     return result;
 
-
+static void gen_range_pairs(Nodes *, char);
+static NodeResult parse_class(Parser *restrict, Nodes *restrict);
+static NodeResult parse_atom(Parser *restrict, Nodes *restrict);
+static NodeResult parse_repeat(Parser *restrict, Nodes *restrict);
+static NodeResult parse_bound(Parser *restrict, Nodes *restrict, long);
+static NodeResult parse_escape(Parser *restrict, Nodes *restrict);
 /* ============================================================
  * Node helper
  * ============================================================ */
@@ -152,16 +157,13 @@ static CharResult parse_class_char(Parser *this) {
  * Parser creation
  * ============================================================ */
 
-Parser *parse_new(const char *pattern) {
-    Parser *parser = mem_alloc(sizeof(Parser));
+Parser *parse_new(const char *pattern, long len) {
+    Parser *parser = mem_malloc(sizeof(Parser));
     if (parser == 0)
         return 0;
     parser->pos = 0;
     parser->group_count = 0;
-    long len = 0;
-    while (pattern[len] != '\0')
-        len++;
-    parser->chars = mem_alloc(len + 1);
+    parser->chars = mem_malloc(len + 1);
     if (parser->chars == 0) {
         mem_free(parser);
         return 0;
@@ -727,16 +729,18 @@ static void gen_range_pairs(
     char c
 ) {
     switch (c) {
-        case 'w':
-            char range[][2] = shorthand_class_ranges('s');
+        case 'w': {
+            char (*range)[2] = shorthand_class_ranges('w');
             for (int i=1; i < range[0][0];i++)
                 make_range_pair(nodes, range[i][0], range[i][1]);
             break;
-        case 's':
-            char range[][2] = shorthand_class_ranges('s');
+        }
+        case 's': {
+            char (*range)[2] = shorthand_class_ranges('s');
             for (int i=1; i < range[0][0];i++)
                 make_range_pair(nodes, range[i][0], range[i][1]);
             break;
+        }
         default:
             break;
     }

@@ -47,8 +47,8 @@ unsafe extern "C" {
     pub fn nodes_drop(n: *mut Nodes);
 
     pub fn parse_new(pattern: *const u8, len: i64) -> Parser;
-    pub fn parse_alt(p: *mut Parser, n: *mut Nodes) -> NodeResult;
-    pub fn parser_drop(p: *mut Parser);
+  //  pub fn parse_alt(p: *mut Parser, n: *mut Nodes) -> NodeResult;
+//    pub fn parser_drop(p: *mut Parser);
 }
 
 #[derive(Debug)]
@@ -118,19 +118,24 @@ impl Regex {
     /// `chars` の `start` 文字目以降で最初にマッチする位置を探す。
     /// 見つかれば各キャプチャグループの (開始, 終了) 文字インデックスを返す。
     /// 添字 0 が全体マッチに対応する。
-    fn find_at(&self, chars: &[char], start: usize) -> Option<Caps> {
+    fn find_at(
+        &self, 
+        chars: &[char], 
+        start: usize
+    ) -> Option<Caps> {
         // self.nodes はこの Regex インスタンスが専有するヒープ領域への
         // ポインタで、Regex の生存中は nodes_drop されないため参照化して安全。
         let nodes: &Nodes = unsafe { &*self.nodes };
         // でバック用
-        // dbg!("JJJJJJJJJJJJ");
-        // for i in 0..10 {
-        //     dbg!(&nodes.nodes[i]);
-        // }
+        /* dbg!("JJJJJJJJJJJJ");
+         for i in 0..10 {
+             dbg!(nodes.nodes[i].left);
+         }*/
         for pos in start..=chars.len() {
             let mut caps: Caps = vec![None; self.group_count + 1];
             let mut k: Box<Cont> = Box::new(|end, _caps: &mut Caps| Some(end));
             if let Some(end) = match_node(nodes, self.root, chars, pos, &mut caps, &mut *k) {
+        dbg!(chars);
                 caps[0] = Some((pos, end));
                 return Some(caps);
             }
@@ -162,7 +167,9 @@ impl Regex {
             let (m_start, m_end) = spans[0].unwrap();
 
             // マッチの直前までの部分をそのままコピー
-            result.push_str(&text[char_to_byte[last_end]..char_to_byte[m_start]]);
+            result.push_str(
+                &text[char_to_byte[last_end]..char_to_byte[m_start]]
+            );
 
             // このマッチのキャプチャから置換文字列を組み立てる
             let captures = Captures::new(text, spans);
