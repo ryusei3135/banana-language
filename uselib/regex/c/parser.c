@@ -102,10 +102,21 @@ static NodeResult parse_escape(Parser *restrict, Nodes *restrict);
  * parse_* が返した Node index の Node を
  * concat / alt の要素として追加する。
  */
+/*
+ * 修正: 以前はエラー時にここで view_err_msg() を呼びメッセージを
+ * 解放してから呼び出し元へ返していたが、これは「エラーを最終的に
+ * 消費する場所」ではなく「エラーを一段上に伝播するだけの場所」であり、
+ * 一度解放したポインタがそのまま Rust 側 (cstr_to_string) まで
+ * 伝わって use-after-free になっていた。さらに parse_alt のように
+ * 複数階層ネストする呼び出し (グループ `(...)` の再帰解析) では、
+ * 一段深いところで解放済みのポインタを上の階層で再度解放しようとして
+ * 二重解放を引き起こしていた。ここでは解放せずそのまま返す
+ * (parse_repeat や parse_atom のグループ処理など、他の伝播箇所と
+ * 同じ扱いに揃える)。
+ */
 #define PushNode(E)\
     NodeResult __r = E;\
     if (__r.kind == Err) {\
-        view_err_msg(&__r);\
         return __r;\
     }\
     push_node(nodes, nodes->nodes[__r.ok]);
@@ -175,6 +186,18 @@ Parser *parse_new(const char *pattern, long len) {
 }
 
 
+/*
+ * parse_new() が mem_malloc() で確保した Parser を解放する。
+ * chars バッファ -> Parser 本体、の順で解放する。
+ */
+void parser_drop(Parser *self) {
+    if (self == 0)
+        return;
+    mem_free(self->chars);
+    mem_free(self);
+}
+
+
 /* ============================================================
  * CONCAT
  * ============================================================ */
@@ -206,6 +229,57 @@ static NodeResult parse_concat(
             idx
         );
     return ok_val(concat_idx);
+}
+
+
+/* ============================================================
+ * ALT
+ *
+ * concat ('|' concat)*
+ * ============================================================ */
+
+NodeResult parse_alt(
+    Parser *restrict self,
+    Nodes *restrict nodes
+) {
+    long nodes_start = nodes->len;
+    /*
+     * ここでは PushNode マクロを使わない。
+     * PushNode はエラー時に view_err_msg() でメッセージを解放してから
+     * 呼び出し元へ返す設計になっており、これは「エラーを一度だけ消費する」
+     * 末端の呼び出し元 (例: parse_concat が parse_repeat を包む場合) を
+     * 想定したものである。parse_alt はグループ `(...)` の中身を再帰的に
+     * 解析するために複数階層ネストしうるため、PushNode を重ねて使うと
+     * 一段深いところで既に解放済みのエラーメッセージを、上の階層の
+     * PushNode がもう一度 view_err_msg() で解放しようとして二重解放になる。
+     * parse_atom の '(' ケースで parse_alt の結果を素通しする書き方と
+     * 同様に、ここでも解放せずそのまま返す。
+     */
+    NodeResult first =
+        parse_concat(self, nodes);
+    if (first.kind == Err)
+        return first;
+    push_node(nodes, nodes->nodes[first.ok]);
+    while (match_chr(self, '|')) {
+        bump(self);
+        NodeResult next =
+            parse_concat(self, nodes);
+        if (next.kind == Err)
+            return next;
+        push_node(nodes, nodes->nodes[next.ok]);
+    }
+    long idx =
+        make_range_pair(
+            nodes,
+            nodes_start,
+            nodes->len
+        );
+    long alt_idx =
+        make_alt_node(
+            nodes,
+            idx
+        );
+    return ok_val(alt_idx);
 }
 
 

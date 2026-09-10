@@ -47,8 +47,8 @@ unsafe extern "C" {
     pub fn nodes_drop(n: *mut Nodes);
 
     pub fn parse_new(pattern: *const u8, len: i64) -> Parser;
-  //  pub fn parse_alt(p: *mut Parser, n: *mut Nodes) -> NodeResult;
-//    pub fn parser_drop(p: *mut Parser);
+    pub fn parse_alt(p: *mut Parser, n: *mut Nodes) -> NodeResult;
+    pub fn parser_drop(p: *mut Parser);
 }
 
 #[derive(Debug)]
