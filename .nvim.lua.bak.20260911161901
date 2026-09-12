@@ -1,0 +1,112 @@
+require("lazy").setup({
+    { "neovim/nvim-lspconfig" },
+    { "Mofiqul/vscode.nvim" },
+    -- その他必要なプラグイン
+})
+
+
+-- あなたの apply_highlights() など
+vim.opt.tabstop = 4
+vim.opt.shiftwidth = 4
+vim.opt.expandtab = true
+
+local function apply_highlights()
+    -- ベースとなる古典的グループ(フォールバック用、最優先で設定)
+    vim.api.nvim_set_hl(0, "Comment", { fg = "#1F5C2E", italic = true })
+    vim.api.nvim_set_hl(0, "SpecialComment", { fg = "#5AC8A8", italic = true })
+
+    -- キーワード・制御構文
+    vim.api.nvim_set_hl(0, "Statement",       { fg = "#6CFF6C", bold = true })
+    vim.api.nvim_set_hl(0, "rustKeyword",     { fg = "#6CFF6C", bold = true })
+    vim.api.nvim_set_hl(0, "rustConditional", { fg = "#6CFF6C", bold = true })
+    vim.api.nvim_set_hl(0, "rustRepeat",      { fg = "#6CFF6C", bold = true })
+    vim.api.nvim_set_hl(0, "@keyword",            { fg = "#6CFF6C", bold = true })
+    vim.api.nvim_set_hl(0, "@keyword.function",   { fg = "#6CFF6C", bold = true })
+    vim.api.nvim_set_hl(0, "@keyword.return",     { fg = "#6CFF6C", bold = true })
+    vim.api.nvim_set_hl(0, "@conditional",        { fg = "#6CFF6C", bold = true })
+    vim.api.nvim_set_hl(0, "@repeat",             { fg = "#6CFF6C", bold = true })
+
+    -- 型・構造体・enum・self
+    vim.api.nvim_set_hl(0, "rustStorage", { fg = "#8EF7B5", bold = true })
+    vim.api.nvim_set_hl(0, "rustEnum",    { fg = "#1E8449", bold = true })
+    vim.api.nvim_set_hl(0, "rustSelf",    { fg = "#2ECCA6", bold = true })
+    vim.api.nvim_set_hl(0, "rustType",    { fg = "#2ECC71", bold = true })
+    vim.api.nvim_set_hl(0, "rustDerive",  { fg = "#B6D94C", bold = true })
+    vim.api.nvim_set_hl(0, "@type",         { fg = "#2ECC71" })
+    vim.api.nvim_set_hl(0, "@type.builtin", { fg = "#3DDC84" })
+    vim.api.nvim_set_hl(0, "@constructor",  { fg = "#4ADE80" })
+    vim.api.nvim_set_hl(0, "@attribute",    { fg = "#B6D94C", bold = true })
+
+    -- モジュール・パス
+    vim.api.nvim_set_hl(0, "@module",                 { fg = "#0F8A3B", bold = true })
+    vim.api.nvim_set_hl(0, "@module.rust",            { fg = "#0F8A3B", bold = true })
+    vim.api.nvim_set_hl(0, "@lsp.type.namespace.rust",{ fg = "#0F8A3B", bold = true })
+    vim.api.nvim_set_hl(0, "rustModPath",             { fg = "#0F8A3B", bold = true })
+    vim.api.nvim_set_hl(0, "rustModule",              { fg = "#0F8A3B", bold = true })
+
+    -- 変数・関数・マクロ
+    vim.api.nvim_set_hl(0, "@variable",           { fg = "#8EF7B5" })
+    vim.api.nvim_set_hl(0, "@variable.parameter", { fg = "#8EF7B5" })
+    vim.api.nvim_set_hl(0, "@variable.builtin",   { fg = "#2ECCA6", italic = true })
+    vim.api.nvim_set_hl(0, "@property",           { fg = "#8EF7B5" })
+    vim.api.nvim_set_hl(0, "@field",              { fg = "#8EF7B5" })
+    vim.api.nvim_set_hl(0, "@function",       { fg = "#C8FF6A" })
+    vim.api.nvim_set_hl(0, "@function.call",  { fg = "#C8FF6A" })
+    vim.api.nvim_set_hl(0, "@method",         { fg = "#C8FF6A" })
+    vim.api.nvim_set_hl(0, "@method.call",    { fg = "#C8FF6A" })
+    vim.api.nvim_set_hl(0, "@macro",          { fg = "#A8FF60", bold = true })
+    vim.api.nvim_set_hl(0, "@function.macro", { fg = "#A8FF60", bold = true })
+
+    -- 数値・真偽値・定数
+    vim.api.nvim_set_hl(0, "rustBoolean",   { fg = "#D6FF6B", bold = true })
+    vim.api.nvim_set_hl(0, "rustNumber",    { fg = "#D6FF6B" })
+    vim.api.nvim_set_hl(0, "@number",       { fg = "#D6FF6B" })
+    vim.api.nvim_set_hl(0, "@number.float", { fg = "#D6FF6B" })
+    vim.api.nvim_set_hl(0, "@boolean",      { fg = "#D6FF6B", bold = true })
+    vim.api.nvim_set_hl(0, "@constant",               { fg = "#D6FF6B" })
+    vim.api.nvim_set_hl(0, "@constant.builtin",       { fg = "#D6FF6B", bold = true })
+    vim.api.nvim_set_hl(0, "@lsp.type.enumMember.rust", { fg = "#D6FF6B" })
+
+    -- 文字列・文字・エスケープ
+    vim.api.nvim_set_hl(0, "rustString",        { fg = "#B7F5A0" })
+    vim.api.nvim_set_hl(0, "rustCharacter",     { fg = "#B7F5A0" })
+    vim.api.nvim_set_hl(0, "rustStringEscape",  { fg = "#7CE495", bold = true })
+    vim.api.nvim_set_hl(0, "@string",           { fg = "#B7F5A0" })
+    vim.api.nvim_set_hl(0, "@character",        { fg = "#B7F5A0" })
+    vim.api.nvim_set_hl(0, "@string.escape",    { fg = "#7CE495", bold = true })
+
+    -- コメント(通常: 濃い緑 / ドキュメント: 別トーン)
+    vim.api.nvim_set_hl(0, "rustCommentLine",        { fg = "#1F5C2E", italic = true })
+    vim.api.nvim_set_hl(0, "rustCommentBlock",       { fg = "#1F5C2E", italic = true })
+    vim.api.nvim_set_hl(0, "@comment",               { fg = "#1F5C2E", italic = true })
+    vim.api.nvim_set_hl(0, "@comment.documentation",       { fg = "#5AC8A8", italic = true })
+    vim.api.nvim_set_hl(0, "@comment.doc",                 { fg = "#5AC8A8", italic = true })
+    vim.api.nvim_set_hl(0, "rustCommentLineDoc",           { fg = "#5AC8A8", italic = true })
+    vim.api.nvim_set_hl(0, "rustCommentBlockDoc",          { fg = "#5AC8A8", italic = true })
+
+    -- 演算子・区切り記号(青系).attribute.rust
+    vim.api.nvim_set_hl(0, "rustOperator",           { fg = "#5AA5E8" })
+    vim.api.nvim_set_hl(0, "@operator",              { fg = "#5AA5E8" })
+    vim.api.nvim_set_hl(0, "@punctuation.bracket",   { fg = "#4A90D9" })
+    vim.api.nvim_set_hl(0, "@punctuation.delimiter", { fg = "#4A90D9" })
+    vim.api.nvim_set_hl(0, "@punctuation.special",   { fg = "#6FB8F0", bold = true })
+    vim.api.nvim_set_hl(0, "Delimiter", { fg = "#4A90D9" })
+    vim.api.nvim_set_hl(0, "MatchParen", { fg = "#FFFFFF", bg = "#245A8C", bold = true })
+    vim.api.nvim_set_hl(0, "@operator.rust.try", { fg = "#00bfff", bold = true })
+
+    vim.api.nvim_set_hl(0, "@lsp.type.builtinAttribute.rust", { fg = "#32cd32", bold = true})
+    vim.api.nvim_set_hl(0, "@lsp.typemod.generic.attribute.rust", { fg = "#32cd32", bold = true })
+    vim.api.nvim_set_hl(0, "@lsp.typemod.attributeBracket.attribute.rust", { fg = "#228d22", bold = true})
+
+    vim.api.nvim_set_hl(0, "CodeiumSuggestion", {
+      fg = "#00ff00",
+      italic = true,
+    })
+end
+
+apply_highlights()
+
+-- ColorScheme変更時だけでなく、他プラグインの読み込み完了後にも再適用
+vim.api.nvim_create_autocmd({ "ColorScheme", "VimEnter" }, {
+    callback = apply_highlights,
+})

@@ -46,7 +46,22 @@ unsafe extern "C" {
     pub fn ini_nodes() -> *mut Nodes;
     pub fn nodes_drop(n: *mut Nodes);
 
-    pub fn parse_new(pattern: *const u8, len: i64) -> Parser;
+    // 修正: parse_new は C 側では `Parser *`（ヒープ確保した構造体への
+    // ポインタ）を返す実装になっている。しかし以前の宣言は
+    // `-> Parser` (32byte の構造体を値で返す) になっていた。
+    // x86-64 SysV ABI では 16byte を超える構造体を値で返す場合、
+    // 呼び出し側が確保したバッファへの隠しポインタを第1引数(RDI)として
+    // 渡し、呼ばれた側がそこへ書き込む規約 (sret) になる。
+    // Rust 側はこの規約で RDI に確保済みバッファのアドレスを積んで
+    // 呼ぶが、C 側の実装はそれを知らず、素直に第1引数を
+    // `pattern`、第2引数を `len` として読んでしまうため、本来の
+    // pattern ポインタと len がまるごとズレて渡り、Rust 側の
+    // `parser` 変数は一切書き込まれず未初期化のままになっていた。
+    // 以降 parser.chars / chars_len / pos はすべて不定値になり、
+    // 環境によって free(不正なポインタ) や index out of bounds
+    // パニックなど、再現性の低いクラッシュを引き起こしていた。
+    // ini_nodes と同様、ポインタ返却として扱うのが正しい。
+    pub fn parse_new(pattern: *const u8, len: i64) -> *mut Parser;
     pub fn parse_alt(p: *mut Parser, n: *mut Nodes) -> NodeResult;
     pub fn parser_drop(p: *mut Parser);
 }
@@ -80,13 +95,19 @@ impl Regex {
                 RegexError(format!("パターンに NUL 文字が含まれています: {}", e))
             })?;
 
-            let mut parser: Parser = parse_new(
+            let parser: *mut Parser = parse_new(
                 c_pattern.as_ptr() as *const u8, 
                 pattern.bytes().len() as i64
             );
             let nodes: *mut Nodes = ini_nodes();
-            let result = parse_alt(&mut parser, nodes);
-            parser_drop(&mut parser);
+            let result = parse_alt(parser, nodes);
+
+            // parser_drop() で parser (と parser->chars) を解放してしまう
+            // 前に、後段で使うフィールドだけ先にコピーしておく。
+            let parser_pos = (*parser).pos;
+            let parser_chars_len = (*parser).chars_len;
+            let parser_group_count = (*parser).group_count;
+            parser_drop(parser);
 
             let root = match result.kind {
                 ResultKind::Ok => result.v.ok,
@@ -99,18 +120,18 @@ impl Regex {
                 }
             };
 
-            if parser.pos < parser.chars_len {
+            if parser_pos < parser_chars_len {
                 nodes_drop(nodes);
                 return Err(RegexError(format!(
                     "予期しない文字が {} 文字目にあります",
-                    parser.pos
+                    parser_pos
                 )));
             }
 
             Ok(Regex {
                 nodes,
                 root,
-                group_count: parser.group_count,
+                group_count: parser_group_count,
             })
         }
     }
@@ -126,16 +147,10 @@ impl Regex {
         // self.nodes はこの Regex インスタンスが専有するヒープ領域への
         // ポインタで、Regex の生存中は nodes_drop されないため参照化して安全。
         let nodes: &Nodes = unsafe { &*self.nodes };
-        // でバック用
-        /* dbg!("JJJJJJJJJJJJ");
-         for i in 0..10 {
-             dbg!(nodes.nodes[i].left);
-         }*/
         for pos in start..=chars.len() {
             let mut caps: Caps = vec![None; self.group_count + 1];
             let mut k: Box<Cont> = Box::new(|end, _caps: &mut Caps| Some(end));
             if let Some(end) = match_node(nodes, self.root, chars, pos, &mut caps, &mut *k) {
-        dbg!(chars);
                 caps[0] = Some((pos, end));
                 return Some(caps);
             }
@@ -235,6 +250,7 @@ fn build_char_to_byte(text: &str) -> Vec<usize> {
 ///
 /// 添字 0 は全体マッチ、1以降は `(...)` の出現順に対応する。
 /// マッチしなかった任意グループの位置は `None` になる。
+#[derive(Debug)]
 pub struct Captures<'t> {
     text: &'t str,
     // 各キャプチャグループの (開始, 終了) 文字インデックス。0番目が全体マッチ。
@@ -298,7 +314,6 @@ impl<'t> Captures<'t> {
 impl<'t> std::ops::Index<usize> for Captures<'t> {
     type Output = str;
     fn index(&self, i: usize) -> &str {
-        self.get(i)
-            .unwrap_or_else(|| panic!("キャプチャグループ {} はマッチしていません", i))
+        self.get(i).expect("err")
     }
 }

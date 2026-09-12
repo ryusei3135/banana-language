@@ -98,22 +98,6 @@ static NodeResult parse_escape(Parser *restrict, Nodes *restrict);
  * Node helper
  * ============================================================ */
 
-/*
- * parse_* が返した Node index の Node を
- * concat / alt の要素として追加する。
- */
-/*
- * 修正: 以前はエラー時にここで view_err_msg() を呼びメッセージを
- * 解放してから呼び出し元へ返していたが、これは「エラーを最終的に
- * 消費する場所」ではなく「エラーを一段上に伝播するだけの場所」であり、
- * 一度解放したポインタがそのまま Rust 側 (cstr_to_string) まで
- * 伝わって use-after-free になっていた。さらに parse_alt のように
- * 複数階層ネストする呼び出し (グループ `(...)` の再帰解析) では、
- * 一段深いところで解放済みのポインタを上の階層で再度解放しようとして
- * 二重解放を引き起こしていた。ここでは解放せずそのまま返す
- * (parse_repeat や parse_atom のグループ処理など、他の伝播箇所と
- * 同じ扱いに揃える)。
- */
 #define PushNode(E)\
     NodeResult __r = E;\
     if (__r.kind == Err) {\
@@ -206,21 +190,49 @@ static NodeResult parse_concat(
     Parser *restrict self,
     Nodes *restrict nodes
 ) {
-    long nodes_start = nodes->len;
+    /*
+     * 修正: 以前は nodes_start をループの一番最初に一度だけ記録し、
+     * 各要素ごとに PushNode マクロで「結果ノードを配列末尾へコピー」
+     * していた。しかし PushNode はコピー元の(元々あった)ノードを
+     * 消さずに残すため、[nodes_start, 最終len) の範囲には
+     * 「各要素の元ノード」と「そのコピー」が両方含まれてしまい、
+     * 例えば "abc" の連結が実際には6要素 (a,a,b,b,c,c) の列として
+     * 組み立てられていた。ネストした構造 (グループ・文字クラス等) が
+     * 混ざるとさらに、要素の"内部で使われているだけの補助ノード"まで
+     * 一緒に取り込まれてしまう。
+     *
+     * ここでは各要素の parse_repeat() の戻り値 (index) だけを
+     * いったん children[] に貯めておき、全要素を解析し終えてから
+     * まとめて配列末尾にコピーする。こうすることで
+     * [seq_start, nodes->len) には「各要素のコピーちょうど1つずつ」
+     * だけが並ぶようになる。
+     */
+    long children[MaxLen];
+    int child_count = 0;
     for (;;) {
         CharOpt r = peek(self);
         if (r.kind == None)
             break;
         if (*r.value == '|' || *r.value == ')')
             break;
-        PushNode(
-            parse_repeat(self, nodes)
-        );
+        NodeResult res =
+            parse_repeat(self, nodes);
+        if (res.kind == Err)
+            return res;
+        if (child_count >= MaxLen)
+            return make_err_result(
+                "パターンが長すぎます\0"
+            );
+        children[child_count] = res.ok;
+        child_count += 1;
     }
+    long seq_start = nodes->len;
+    for (int i = 0; i < child_count; i++)
+        push_node(nodes, nodes->nodes[children[i]]);
     long idx =
         make_range_pair(
             nodes,
-            nodes_start,
+            seq_start,
             nodes->len
         );
     long concat_idx =
@@ -242,36 +254,56 @@ NodeResult parse_alt(
     Parser *restrict self,
     Nodes *restrict nodes
 ) {
-    long nodes_start = nodes->len;
     /*
-     * ここでは PushNode マクロを使わない。
-     * PushNode はエラー時に view_err_msg() でメッセージを解放してから
-     * 呼び出し元へ返す設計になっており、これは「エラーを一度だけ消費する」
-     * 末端の呼び出し元 (例: parse_concat が parse_repeat を包む場合) を
-     * 想定したものである。parse_alt はグループ `(...)` の中身を再帰的に
-     * 解析するために複数階層ネストしうるため、PushNode を重ねて使うと
-     * 一段深いところで既に解放済みのエラーメッセージを、上の階層の
-     * PushNode がもう一度 view_err_msg() で解放しようとして二重解放になる。
+     * 修正: parse_concat と同じ理由で、nodes_start をループの最初に
+     * 一度だけ記録して [nodes_start, 最終len) をそのまま分岐リストと
+     * みなす方式は誤り。各 '|' 区切りの parse_concat() 呼び出しは
+     * 内部で多数のノード(その concat 自身の子要素やコピー)を
+     * 作るため、その全てが分岐リストに紛れ込んでしまい、
+     * 例えば "abc" 単体(分岐は1つだけのはず)が実際には
+     * 「a, a, b, b, c, c, Range, Concat」のような
+     * 文字単位のバラバラな分岐として扱われてしまっていた。
+     *
+     * parse_concat と同様、各分岐の parse_concat() の戻り値だけを
+     * branches[] に貯めておき、全分岐を解析し終えてから
+     * まとめて配列末尾にコピーする。
+     *
+     * また PushNode マクロは使わない(エラー時に一度解放したメッセージを
+     * 上位でもう一度解放してしまう二重解放を避けるため。
      * parse_atom の '(' ケースで parse_alt の結果を素通しする書き方と
-     * 同様に、ここでも解放せずそのまま返す。
+     * 同様に、エラーは解放せずそのまま返す)。
      */
+    long branches[MaxLen];
+    int branch_count = 0;
+
     NodeResult first =
         parse_concat(self, nodes);
     if (first.kind == Err)
         return first;
-    push_node(nodes, nodes->nodes[first.ok]);
+    branches[branch_count] = first.ok;
+    branch_count += 1;
+
     while (match_chr(self, '|')) {
         bump(self);
         NodeResult next =
             parse_concat(self, nodes);
         if (next.kind == Err)
             return next;
-        push_node(nodes, nodes->nodes[next.ok]);
+        if (branch_count >= MaxLen)
+            return make_err_result(
+                "パターンが長すぎます\0"
+            );
+        branches[branch_count] = next.ok;
+        branch_count += 1;
     }
+
+    long seq_start = nodes->len;
+    for (int i = 0; i < branch_count; i++)
+        push_node(nodes, nodes->nodes[branches[i]]);
     long idx =
         make_range_pair(
             nodes,
-            nodes_start,
+            seq_start,
             nodes->len
         );
     long alt_idx =
@@ -325,78 +357,99 @@ static NodeResult parse_bound(
     Nodes *restrict nodes,
     long atom
 ) {
+    /*
+     * 修正: このパーサ内では複数の独立したバグが重なっていた。
+     *
+     * 1. parse_num(start, end) は asm 実装 (chr.s) を見ると
+     *    [start, end) の半開区間 (end は「最後の数字の次」を指す)
+     *    を前提にしている。ところが従来のコードは min_s[1] /
+     *    max_s.end に「最後の数字そのもの」を指すポインタを
+     *    格納していたため、1桁の数字 (例: "2") では start==end
+     *    となり parse_num が即 0 を返し、2桁以上の数字では
+     *    最後の1桁が読み飛ばされていた (例: "12" が "1" として
+     *    読まれる)。
+     *
+     * 2. "{n,}" (上限なし) のケースで、上限が指定されなかった時の
+     *    センチネルが (char*)0xFF 同士の組で、そのまま
+     *    parse_num(0xFF, 0xFF) を呼ぶと start==end で 0 を返して
+     *    しまい、本来 -1 (上限なし。match_node 側は
+     *    `max_raw < 0` を「上限なし」として扱う) にすべきところが
+     *    0 (0回の繰り返し=事実上マッチ不可) になっていた。
+     *
+     * 3. 出来上がった Repeat ノードを
+     *    `make_node(nodes, Repeat, idx, 0)` として作っていたが、
+     *    NodeKind::Repeat は「left=中身のindex, right=(min,max)の
+     *    Rangeノードのindex」という規約 (lib.rs 側コメント参照) の
+     *    はずが、left に (min,max) の Range を、right に
+     *    ハードコードした 0 を入れてしまっていた
+     *    (この 0 がたまたま atom の index と一致する時だけ
+     *    それらしく見えていた)。
+     *
+     * これら3つが重なって、"{n}" / "{n,m}" / "{n,}" のいずれも
+     * まともに機能していなかった。ここで一括して修正する。
+     */
     long checkpoint = self->pos;
-    bump(self);
-    char *min_s[2] = {
-        peek(self).value,
-        0
-    };
-    while (peek(self).kind == Some) {
-        char *c =
-            peek(self).value;
-        if (is_byte_digit(*c) == 1) {
-            min_s[1] = c;
-            bump(self);
-        } else
-            break;
+    bump(self); // '{' を消費済み
+
+    char *min_start = self->chars + self->pos;
+    while (
+        peek(self).kind == Some
+        &&
+        is_byte_digit(*peek(self).value) == 1
+    ) {
+        bump(self);
     }
-    if (min_s[1] == 0) {
+    char *min_end = self->chars + self->pos;
+
+    if (min_end == min_start) {
+        // '{' の直後に数字が無い -> 量指定子ではなくリテラル '{' として扱う
         self->pos =
             checkpoint + 1;
-        long right =
-            make_node(
-                nodes,
-                Char,
-                (long)'{',
-                0
-            );
+        long seq_start = nodes->len;
+        push_node(nodes, nodes->nodes[atom]);
+        make_node(
+            nodes,
+            Char,
+            (long)'{',
+            0
+        );
         long range_idx =
             make_range_pair(
                 nodes,
-                atom,
-                right
+                seq_start,
+                nodes->len
             );
         long idx =
-            make_node(
-                nodes,
-                Range,
-                range_idx,
-                0
-            );
+            make_concat_node(nodes, range_idx);
         return ok_val(idx);
     }
-    char *max[2] = {
-        (char*)0xFF,
-        (char*)0xFF
-    };
-    struct {
-        char *start;
-        char *end;
-    } max_s = {
-        0,
-        0
-    };
+
+    long min_val =
+        (long)parse_num(min_start, min_end);
+    long max_val;
+
     if (match_chr(self, ',')) {
-        max_s.start =
-            peek(self).value;
         bump(self);
-        while (peek(self).kind == Some) {
-            char *c =
-                peek(self).value;
-            if (is_byte_digit(*c) == 1) {
-                max_s.end = c;
-                bump(self);
-            } else
-                break;
+        char *max_start = self->chars + self->pos;
+        while (
+            peek(self).kind == Some
+            &&
+            is_byte_digit(*peek(self).value) == 1
+        ) {
+            bump(self);
         }
-        if (max_s.end != 0) {
-            max[0] = max_s.start;
-            max[1] = max_s.end;
+        char *max_end = self->chars + self->pos;
+        if (max_end == max_start) {
+            // "{n,}" -> 上限なし
+            max_val = -1;
+        } else {
+            max_val = (long)parse_num(max_start, max_end);
         }
     } else {
-        max[0] = min_s[0];
-        max[1] = min_s[1];
+        // "{n}" -> ちょうど n 回
+        max_val = min_val;
     }
+
     if (unmatch_bump(self, '}'))
         return make_err_result(
             "'{' に対応する '}' がありません\0"
@@ -404,21 +457,15 @@ static NodeResult parse_bound(
     long idx =
         make_range_pair(
             nodes,
-            parse_num(
-                min_s[0],
-                min_s[1]
-            ),
-            parse_num(
-                max[0],
-                max[1]
-            )
+            min_val,
+            max_val
         );
     return ok_val(
         make_node(
             nodes,
             Repeat,
-            idx,
-            0
+            atom,
+            idx
         )
     );
 }
@@ -578,6 +625,7 @@ static NodeResult parse_escape(
     char c =
         *peek(self).value;
     bump(self);
+    char chr;
     switch (c) {
         case 'd':
         case 'D':
@@ -631,42 +679,26 @@ static NodeResult parse_escape(
             return ok_val(idx);
         }
         case 'n':
-            return ok_val(
-                make_node(
-                    nodes,
-                    Char,
-                    (long)'\n',
-                    0
-                )
-            );
+            chr = '\n';
+            goto make_node;
         case 't':
-            return ok_val(
-                make_node(
-                    nodes,
-                    Char,
-                    (long)'\t',
-                    0
-                )
-            );
+            chr = '\t';
+            goto make_node;
         case 'r':
-            return ok_val(
-                make_node(
-                    nodes,
-                    Char,
-                    (long)'\r',
-                    0
-                )
-            );
+            chr = '\r';
+            goto make_node;
         default:
-            return ok_val(
-                make_node(
-                    nodes,
-                    Char,
-                    (long)c,
-                    0
-                )
-            );
+            chr = c;
     }
+make_node:
+    return ok_val(
+        make_node(
+            nodes,
+            Char,
+            (long)chr,
+            0
+        )
+    );
 }
 
 
@@ -678,9 +710,17 @@ static NodeResult parse_class(
     Parser *restrict self,
     Nodes *restrict nodes
 ) {
+    /*
+     * 修正: '[' は呼び出し元の parse_atom() が既に
+     * `CharOpt c0 = bump(self);` で消費済み (c0.value=='[' で
+     * ここへディスパッチしてきている)。にも関わらずここでも
+     * unmatch_bump(self, '[') によってもう一度 '[' を読もうとしていたため、
+     * 実際にはその次の文字 (例: 否定クラスの '^' や最初のクラス文字) を
+     * '[' と比較して常に失敗し、"'[' がありません" エラーになっていた。
+     * parse_escape など他の parse_atom ディスパッチ先と同様、
+     * ここではディスパッチ文字を消費し直さない。
+     */
     int negated = 0;
-    if (unmatch_bump(self,'['))
-        return make_err_result("'[' がありません\0");
     if (match_chr(self, '^')) {
         bump(self);
         negated = 1;
@@ -802,20 +842,24 @@ static void gen_range_pairs(
     Nodes *nodes,
     char c
 ) {
+    char chr;
     switch (c) {
         case 'w': {
-            char (*range)[2] = shorthand_class_ranges('w');
-            for (int i=1; i < range[0][0];i++)
-                make_range_pair(nodes, range[i][0], range[i][1]);
+            chr = 'w';
             break;
         }
         case 's': {
-            char (*range)[2] = shorthand_class_ranges('s');
-            for (int i=1; i < range[0][0];i++)
-                make_range_pair(nodes, range[i][0], range[i][1]);
+            chr = 's';
             break;
         }
         default:
-            break;
+            return;
     }
+    char (*range)[2] = shorthand_class_ranges(chr);
+    for (int i=1; i < range[0][0];i++)
+        make_range_pair(
+            nodes, 
+            range[i][0], 
+            range[i][1]
+        );
 }

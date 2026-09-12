@@ -2,7 +2,6 @@ use crate::err::{ErrKind, lex_err::LexErrKind};
 
 use super::*;
 use regex::{Captures, Regex};
-use std::sync::OnceLock;
 
 /// `${...}`を検出する正規表現。
 /// `gen_asm_line`は`#asm`ブロックの行ごとに呼ばれるため、毎回
@@ -117,10 +116,16 @@ impl Parser {
     ) -> Result<Vec<node::InlineAsm>, err::ErrKind> {
         let mut nodes = Vec::<node::InlineAsm>::new();
 
-        if matches!(self.next_tkn(vec!["{"])?, lex::Tkn::LBrace) {
+        if matches!(
+            self.next_tkn(vec!["{"])?, 
+            lex::Tkn::LBrace
+        ) {
             let _ = self.next_tkn(vec![])?;
             loop {
-                match self.current_tkn().clone() {
+                match self
+                    .current_tkn()
+                    .clone()
+                {
                     lex::Tkn::Str(value) => {
                         nodes.push(self.gen_asm_line(&value)?);
                     }
@@ -156,27 +161,33 @@ impl Parser {
         let mut operands = Vec::<node::Expr>::new();
         let mut parse_err: Option<err::ErrKind> = None;
 
-        let asm = inline_var.replace_all(value, |caps: &Captures| {
-            if parse_err.is_some() {
-                return String::new();
-            }
-            let inner = &caps[1]; // ← 正しく "reg_a" 等が取れる
+        let asm = inline_var
+            .replace_all(
+                value, 
+                |caps: &Captures|
+            {
+                if parse_err.is_some() {
+                    return String::new();
+                }
+                println!("{:?}", caps);
+                let inner = &caps[1]; // ← 正しく "reg_a" 等が取れる
 
-            // このクロージャの中で別の Regex::new を呼んでも、
-            // もう inline_var のノード領域を破壊しない
-            match Parser::parse_asm_operand(inner) {
-                Ok(expr) => {
-                    let index = operands.len();
-                    println!("exprs inline asm {:?}", expr);
-                    operands.push(expr);
-                    format!("{{{}}}", index)
-                }
-                Err(e) => {
-                    parse_err = Some(e);
-                    String::new()
+                // このクロージャの中で別の Regex::new を呼んでも、
+                // もう inline_var のノード領域を破壊しない
+                match Parser::parse_asm_operand(inner) {
+                    Ok(expr) => {
+                        let index = operands.len();
+                        println!("exprs inline asm {:?}", expr);
+                        operands.push(expr);
+                        format!("{{{}}}", index)
+                    }
+                    Err(e) => {
+                        parse_err = Some(e);
+                        String::new()
+                    }
                 }
             }
-        });
+        );
         if let Some(e) = parse_err {
             panic!("KKKKKK {:?}", e);
         }

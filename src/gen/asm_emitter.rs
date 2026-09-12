@@ -115,7 +115,10 @@ pub struct AsmEmitter {
 }
 
 impl AsmEmitter {
-    pub fn new(asm_setting: asm_setting::AsmSetting, asm_fmt: asm_setting::AsmFormat) -> Self {
+    pub fn new(
+        asm_setting: asm_setting::AsmSetting, 
+        asm_fmt: asm_setting::AsmFormat
+    ) -> Self {
         let mut me = Self {
             asm_text: String::new(),
             data_sec_text: String::new(),
