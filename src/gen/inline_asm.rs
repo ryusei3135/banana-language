@@ -112,7 +112,10 @@ impl AsmEmitter {
                         .fmt_ref_operand(&reg, &ty.to_bytes())
                 } else {
                     self.asm_fmt
-                        .get_fmt_reg(&var_info.reg, forced_size)
+                        .get_fmt_reg(
+                            &var_info.reg, 
+                            forced_size
+                        )
                 }
             }
             // それ以外(メモリ参照/即値/ポインタなど)は、サイズの
@@ -164,11 +167,17 @@ impl AsmEmitter {
                             .get_fmt_reg(reg, &size);
                         let dst = self.asm_fmt
                             .get_fmt_reg(&free_reg, &size);
-                        let mov_asm = self
+                        let mut mov_asm = self
                             .asm_fmt
                             .get_opcode_tmpl("mov")
                             .replace("{dst}", &dst)
                             .replace("{src1}", &src);
+                        mov_asm = self.asm_fmt
+                            .fmt_mnemonic_resize(
+                                "mov",
+                                &mov_asm,
+                                &size
+                            );
                         self.asm_text.push_str(&mov_asm);
 
                         self.update_value_reg(&var_name, &free_reg);

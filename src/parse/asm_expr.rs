@@ -74,14 +74,21 @@ impl Parser {
         Ok(left)
     }
 
-    fn asm_operand_mul(&mut self) -> Result<node::Expr, err::ErrKind> {
+    fn asm_operand_mul(
+        &mut self
+    ) -> Result<node::Expr, err::ErrKind> {
         let mut left = self.asm_operand_unary()?;
 
         loop {
             left = match self.current_tkn() {
                 lex::Tkn::Mul => {
                     self.advance_tkn();
-                    node::Expr::Mul(node::Expr::wrap(left, self.asm_operand_unary()?))
+                        node::Expr::Mul(
+                            node::Expr::wrap(
+                            left, 
+                            self.asm_operand_unary()?
+                        )
+                    )
                 }
                 lex::Tkn::Div => {
                     self.advance_tkn();
@@ -95,7 +102,9 @@ impl Parser {
     }
 
     /// ポインタの参照(`*p`)とアドレス取得(`[p]`)を含む単項式
-    fn asm_operand_unary(&mut self) -> Result<node::Expr, err::ErrKind> {
+    fn asm_operand_unary(
+        &mut self
+    ) -> Result<node::Expr, err::ErrKind> {
         match self.current_tkn().clone() {
             // `*p` ポインタ`p`が指す値を読み取る
             lex::Tkn::Mul => {
@@ -152,12 +161,21 @@ impl Parser {
     /// 変数名の後に続く、構造体のメンバーアクセス(`.field`)を解析する
     /// - `x`   -> 通常の変数の参照
     /// - `x.y` -> 構造体`x`のメンバー`y`への参照
-    fn asm_operand_name_tail(&mut self, name: String) -> Result<node::Expr, err::ErrKind> {
+    fn asm_operand_name_tail(
+        &mut self, 
+        name: String
+    ) -> Result<node::Expr, err::ErrKind> {
         if matches!(self.current_tkn(), lex::Tkn::Dot) {
             self.advance_tkn();
 
-            let lex::Tkn::Name(field) = self.current_tkn().clone() else {
-                crate::preproc_err!(self, ExpectedMemberNameInAsmOperand);
+            let lex::Tkn::Name(field) = self
+                .current_tkn()
+                .clone() else 
+            {
+                crate::preproc_err!(
+                    self, 
+                    ExpectedMemberNameInAsmOperand
+                );
             };
             self.advance_tkn();
 

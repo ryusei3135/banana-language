@@ -62,21 +62,7 @@ impl Parser {
                 GenFlag::Group1 => {
                     match self.current_tkn().clone() {
                         lex::Tkn::KeyWordPub => {
-                            // この関数などは、公開する
-                            match self.next_tkn(vec!["name", ".."])? {
-                                lex::Tkn::Name(name) => self.build_func::<true>(&name),
-                                unexpect_tkn => {
-                                    // 期待したトークンじゃないので、エラー
-                                    crate::syntax_err!(
-                                        self.build_err_span(),
-                                        err::SyntaxErrKind::UnexpectTknAfterKeyword {
-                                            keyword: lex::Tkn::KeyWordPub,
-                                            expected: vec!["struct", "enum", "name"],
-                                            found: unexpect_tkn,
-                                        }
-                                    )
-                                }
-                            }?;
+                            self.pub_keyword_node()?;
                         }
                         lex::Tkn::Name(name) => {
                             self.build_func::<false>(&name)?;
@@ -101,7 +87,9 @@ impl Parser {
                     // ここでスコープを閉じる
                     if self.current_tkn() == &lex::Tkn::RBrace {
                         self.scope_counter -= 1;
-                        if self.next_tkn(vec![]).is_err() {
+                        if self.next_tkn(vec![])
+                            .is_err() 
+                        {
                             return Ok(&self.gen_nodes);
                         }
 
@@ -182,6 +170,25 @@ impl Parser {
             }
         };
         Ok(node)
+    }
+
+    fn pub_keyword_node(
+        &mut self
+    ) -> Result<(), err::ErrKind> {
+        match self.next_tkn(vec!["name", ".."])? {
+            lex::Tkn::Name(name) => self.build_func::<true>(&name),
+            unexpect_tkn => {
+                // 期待したトークンじゃないので、エラー
+                crate::syntax_err!(
+                    self.build_err_span(),
+                    err::SyntaxErrKind::UnexpectTknAfterKeyword {
+                        keyword: lex::Tkn::KeyWordPub,
+                        expected: vec!["struct", "enum", "name"],
+                        found: unexpect_tkn,
+                    }
+                )
+            }
+        }
     }
 
     /// 反復処理のノードを作成する関数

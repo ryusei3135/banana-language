@@ -7,9 +7,9 @@ use regex::{Captures, Regex};
 /// `gen_asm_line`は`#asm`ブロックの行ごとに呼ばれるため、毎回
 /// `Regex::new`でコンパイルすると無駄なコストがかかる。
 /// `OnceLock`で最初の1回だけコンパイルし、以降は使い回す。
-fn inline_var_regex() -> Regex {
-    Regex::new(r"\$\{([^}]+)\}").unwrap()
-}
+// fn inline_var_regex() -> Regex {
+//     Regex::new(r"\$\{([^}]+)\}").unwrap()
+// }
 
 impl Parser {
     pub(super) fn make_preproc(
@@ -203,13 +203,19 @@ mod inline_asm_tests {
     /// テスト用に、関数の中に`#asm(...)`ブロックを1つ持つ
     /// プログラムを解析し、`InlineAsm`の一覧を取り出す
     fn gen_inline_asm(asm_body: &str) -> Vec<node::InlineAsm> {
-        let src = format!("main(): b1 {{ #asm(gas) {{ {} }} }}", asm_body);
+        let src = format!(
+            "main(): b1 {{ #asm(gas) {{ {} }} }}", 
+            asm_body
+        );
 
         let mut lexer = lex::Lexer::new();
-        lexer.analy(&src.to_string()).unwrap();
+        lexer
+            .analy(&src.to_string())
+            .unwrap();
 
         let mut p = parse::Parser::new();
-        let nodes = p.parser(lexer.gen_tkns).expect("parse failed");
+        let nodes = p.parser(lexer.gen_tkns)
+            .expect("parse failed");
 
         let node::Group1Node::FuncDefine(func) = &nodes[0] else {
             panic!("not a func define")

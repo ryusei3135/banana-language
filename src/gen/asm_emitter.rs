@@ -4,7 +4,7 @@ mod struct_ir;
 mod insert_fmt_reg;
 
 use super::*;
-use crate::asm_setting;
+use crate::asm_setting::{self, ValueFmt};
 use crate::ir::types;
 
 /// 演算結果を格納するレジスタの「適切なサイズ」が、テンプレートを
@@ -34,7 +34,11 @@ pub struct VarIndexInfo {
 }
 
 impl VarIndexInfo {
-    pub fn new(reg: &usize, size: &types::Size, index: &usize) -> Self {
+    pub fn new(
+        reg: &usize, 
+        size: &types::Size, 
+        index: &usize
+    ) -> Self {
         Self {
             reg: *reg,
             size: size.clone(),
@@ -44,7 +48,11 @@ impl VarIndexInfo {
     }
 
     /// `%rbp`からのオフセット(`offset`)に直接置かれている変数として登録する
-    pub fn new_stack(offset: &usize, size: &types::Size, index: &usize) -> Self {
+    pub fn new_stack(
+        offset: &usize, 
+        size: &types::Size, 
+        index: &usize
+    ) -> Self {
         Self {
             reg: *offset,
             size: size.clone(),
@@ -55,14 +63,6 @@ impl VarIndexInfo {
 }
 
 /// 現在使用中のレジスタを管理する
-///
-/// レジスタは`reg_idx`によって使い切り(一度使ったレジスタ番号を
-/// 再利用しない)方式で割り当てられていくため、ここでは「これまでに
-/// 使用された(かつまだ解放されていない)レジスタ番号」を記録しておく。
-///
-/// インラインアセンブラを展開する際、ここに記録されているレジスタを
-/// 全て`push`しておき、展開が終わったら`pop`することで、インライン
-/// アセンブラの中身によって使用中のレジスタの値が破壊されるのを防ぐ。
 #[derive(Debug, Clone, Default)]
 pub struct UsedRegManager {
     used: Vec<usize>,
@@ -162,7 +162,10 @@ impl AsmEmitter {
         self.gen_extern_func_asm(&extern_funcs);
 
         // エントリーポイントを先頭に配置
-        if let Some(ref mut meta_data) = func_tree.func.remove_entry("_start") {
+        if let Some(ref mut meta_data) = func_tree
+            .func
+            .remove_entry("_start") 
+        {
             self.build_func_process(meta_data, &asm_fmt_name);
         }
 
@@ -212,7 +215,11 @@ impl AsmEmitter {
     }
 
     #[inline(always)]
-    pub(super) fn insert_var_info(&mut self, name: &String, var: VarIndexInfo) {
+    pub(super) fn insert_var_info(
+        &mut self,
+        name: &String, 
+        var: VarIndexInfo) 
+    {
         self.used_reg.mark_used(&var.reg);
         self.expr_vars.push(name.clone());
         self.var_hash_map.insert(name.clone(), var);
@@ -220,7 +227,10 @@ impl AsmEmitter {
 
     #[inline(always)]
     pub(super) fn update_value_info(&mut self, name: &String, index: &usize) {
-        self.var_hash_map.get_mut(name).unwrap().index = *index;
+        self.var_hash_map
+            .get_mut(name)
+            .unwrap()
+            .index = *index;
     }
 
     #[inline(always)]
@@ -239,24 +249,12 @@ impl AsmEmitter {
         src2: Option<&usize>,
         this_is_self: bool,
     ) -> String {
+        let base_size: Size = self.check_node_is_mem_val(src1)
+            .unwrap_or(Size::DQ);
         let mut formated = if let Some(struct_idx) = self.resolve_struct_idx(src1) {
             // 構造体の生成
             let mut txt = self.extract_operand_text(&struct_idx, this_is_self);
 
-            // 構造体を`ret`する行は、構造体の「値」ではなく、それが
-            // 置かれているメモリの「アドレス」を戻り値のレジスタへ
-            // 返す必要がある。
-            // - メゾット内(`this_is_self`)の場合、構造体は`self`
-            //   ポインタ(呼び出し規約上の第一引数のレジスタ、
-            //   `%rdi`など)が指す先に直接書き込まれているため、
-            //   返すアドレスも`%rbp`ではなくこの`self`ポインタで
-            //   なければならない。またアドレスを求める処理なので、
-            //   `mov`ではなく`lea`(テンプレート上のキーは`address`)
-            //   を使う必要がある。
-            //   以前はここが常に`opcode`(呼び出し元から渡された
-            //   `"mov"`)と`%rbp`決め打ちだったため、`self`のポインタ
-            //   を無視した`mov %rbp, %rax`という誤ったコードが
-            //   生成されてしまっていた。
             let ret_line = if this_is_self {
                 let self_ptr_reg = self.asm_fmt.get_fmt_param::<String>(&0, Size::DQ);
                 let line = self
@@ -268,64 +266,91 @@ impl AsmEmitter {
             } else {
                 self.asm_fmt
                     .get_opcode_tmpl(opcode)
-                    .replace("{dst}", &self.get_reg(dst, &Size::DQ))
+                    .replace(
+                        "{dst}", 
+                        &self.get_reg(dst, &base_size)
+                    )
                     .replace("{src1}", "%rbp")
             };
             txt.push_str(&ret_line);
             txt
         } else {
-            // `address`(=`lea`)はアドレス(ポインタ)を求める命令なので、
-            // 常にポインタサイズ(8byte = %rcxなどの64bitレジスタ)の
-            // レジスタを使わなければならない。
-            // ここを他のケースと同様に`Size::DD`(32bit)のままにすると、
-            // 後段で`fmt_mnemonic_resize`によってニーモニックだけが
-            // "leaq"のように64bit用に調整される一方でレジスタ表記は
-            // 32bit(`%ecx`など)のままになってしまい、ニーモニックと
-            // レジスタのサイズ表記が食い違ったコードが生成されてしまう。
             let dst_size = if opcode == "address" {
                 &Size::DQ
             } else {
-                &Size::DQ
+                &base_size
             };
             self.asm_fmt
                 .get_opcode_tmpl(opcode)
                 .replace("{dst}", &self.get_reg(dst, dst_size))
-                .replace("{src1}", &self.extract_operand_text(src1, this_is_self))
+                .replace("{src1}", &self.extract_operand_text(
+                    src1, 
+                    this_is_self
+                ))
         };
 
-        // `address`(=`lea`)は必ずここで`fmt_mnemonic_resize`を通す。
-        // `lea`はアドレス(ポインタ)を求める命令なので、構造体か
-        // どうかに関わらず常にポインタサイズ(8byte)として扱う。
-        // ("address"はテンプレートを引くためのキーであって、
-        //  実際の命令語(テンプレート中の文字列)は"lea"なので、
-        //  `fmt_mnemonic_resize`にもそちらを渡す必要がある)
-        if opcode == "address" {
-            formated = self
-                .asm_fmt
-                .fmt_mnemonic_resize("lea", &formated, &Size::DQ);
-        } else if self.check_node_is_struct(&src1) {
-            formated = self
-                .asm_fmt
-                .fmt_mnemonic_resize("mov", &formated, &Size::DQ);
-        } else if let Some(size) = self.check_node_is_memory_value(&src1) {
-            formated = self.asm_fmt.fmt_mnemonic_resize("mov", &formated, &size);
+        if let Some(resized_asm) = self
+            .gen_resize_mnemonic(&formated, opcode, &src1) 
+        {
+            formated = resized_asm;
         }
 
         if let Some(src2_id) = src2 {
-            formated.replace("{src2}", &self.extract_operand_text(src2_id, this_is_self))
+            formated.replace(
+                "{src2}", 
+                &self.extract_operand_text(
+                    src2_id, 
+                    this_is_self
+                )
+            )
         } else {
             formated
         }
+    }
+
+    #[inline(always)]
+    fn gen_resize_mnemonic(
+        &self, 
+        formated: &String,
+        opcode: &str,
+        src1: &usize
+    ) -> Option<String> {
+        let mut resize = self.check_node_is_mem_val(src1).unwrap_or(Size::DQ);
+        let mnemonic: &str = if opcode == "address" {
+            "lea"
+        } else if self.check_node_is_struct(&src1)
+        {
+            "mov"
+        } else if let Some(size) = self
+            .check_node_is_mem_val(&src1) 
+        {
+            resize = size;
+            "mov"
+        } else {
+            return None;
+        };
+        Some(
+            self.asm_fmt
+                .fmt_mnemonic_resize(
+                    mnemonic, 
+                    formated, 
+                    &resize
+                )
+        )
     }
 
     /// `idx`が(直接、あるいは`GetAddress`/`Pointer`でラップされた先に)
     /// `Inst::Struct`を指している場合、その`Inst::Struct`自身のidxを返す。
     /// `format_line`が構造体の生成を特別扱いする際、ラップされた
     /// ノードの内側までたどれるようにするためのヘルパー
-    pub(super) fn resolve_struct_idx(&self, idx: &usize) -> Option<usize> {
+    pub(super) fn resolve_struct_idx(
+            &self, 
+            idx: &usize
+    ) -> Option<usize> {
         match &self.curr_inst[*idx] {
             inst::Inst::Struct { .. } => Some(*idx),
-            inst::Inst::GetAddress(inner) | inst::Inst::Pointer(inner) => {
+            inst::Inst::GetAddress(inner)
+            | inst::Inst::Pointer(inner) => {
                 self.resolve_struct_idx(inner)
             }
             _ => None,
@@ -343,26 +368,51 @@ impl AsmEmitter {
     /// 参照している場合、そのサイズを返す。
     /// これは`mov`命令に付けるサイズ接尾辞(`movl`など)を
     /// 決定するために使う。
-    fn check_node_is_memory_value(&self, node_idx: &usize) -> Option<Size> {
+    fn check_node_is_mem_val(
+        &self, 
+        node_idx: &usize
+    ) -> Option<Size> {
+        self.check_node_is_mem_val_inner(node_idx, false)
+    }
+
+    /// `check_node_is_mem_val`の実装本体
+    /// ## 引数
+    /// - is_deref
+    ///     現在たどっている経路が`Inst::Pointer`(`*ptr`のような
+    ///     参照先の読み書き)を経由しているかどうか。
+    ///     `Inst::MemoryValue`にたどり着いたとき、これが`true`なら
+    ///     ポインタが指す「参照先」の型のサイズ(`ty`)を、`false`なら
+    ///     ポインタ変数「自身」の値のサイズ(常に8byte)を返す。
+    fn check_node_is_mem_val_inner(
+        &self,
+        node_idx: &usize,
+        is_deref: bool,
+    ) -> Option<Size> {
         match &self.curr_inst[*node_idx] {
-            inst::Inst::MemoryValue(inst::MemoryInst::Memory { size, .. }) => Some(size.clone()),
-            // `[a]`のようなポインタ関連のノードは、実際のメモリ参照
-            // (`MemoryValue`)を直接ではなくラップして持っている場合がある。
-            // ここで素通りしてしまうと、実際にはメモリを参照している
-            // オペランドであるにも関わらずサイズが判定できず、
-            // ニーモニックにサイズの接尾辞(`movl`など)が付かないまま
-            // 出力されてしまう。そのため、ラップされている先を辿って
-            // 判定する。
-            inst::Inst::Pointer(inner) | inst::Inst::GetAddress(inner) => {
-                self.check_node_is_memory_value(inner)
+            inst::Inst::MemoryValue(
+                inst::MemoryInst::Memory { size, .. }
+            ) => match size {
+                // `*ptr`のように参照先を読み書きする場合のみ、
+                // 参照先の型`ty`のサイズを使う
+                Size::Pointer { ty, .. } if is_deref => Some((**ty).clone()),
+                // それ以外(ポインタ変数自身の値をそのまま読む場合)は、
+                // ポインタの実際のサイズ(常に8byte)を使う
+                Size::Pointer { .. } => Some(Size::DQ),
+                other => Some(other.clone()),
+            },
+            inst::Inst::Pointer(inner) => {
+                // ここから先は「参照先」をたどる経路になる
+                self.check_node_is_mem_val_inner(inner, true)
             }
-            // `[arr 0]`のような配列の要素への参照(`Inst::InsertArr`)も
-            // 同様にメモリを直接参照するオペランドになる。
-            // `Inst::InsertArr`自体はサイズの情報を持っていないため、
-            // 配列の変数名(`name`)から`var_hash_map`に登録済みの
-            // サイズを引いて判定する。
+            inst::Inst::GetAddress(inner) => {
+                // アドレスを求める経路では参照先をたどっているわけ
+                // ではないので、`is_deref`はそのまま引き継ぐ
+                self.check_node_is_mem_val_inner(inner, is_deref)
+            }
             inst::Inst::InsertArr { name, .. } => {
-                self.var_hash_map.get(name).map(|var| var.size.clone())
+                self.var_hash_map
+                    .get(name)
+                    .map(|var| var.size.clone())
             }
             _ => None,
         }
@@ -370,7 +420,11 @@ impl AsmEmitter {
 
     /// ## 引数
     /// - reg_idx これは必ずusizeで無ければいけない、
-    fn get_reg(&self, reg_idx: Option<&usize>, size: &Size) -> String {
+    fn get_reg(
+        &self, 
+        reg_idx: Option<&usize>, 
+        size: &Size
+    ) -> String {
         let num = if reg_idx.is_none() {
             self.reg_idx
         } else {
@@ -379,32 +433,41 @@ impl AsmEmitter {
         self.asm_fmt.get_fmt_reg(&num, &size)
     }
 
-    pub(super) fn extract_operand_text(&mut self, parent_id: &usize, in_self_ptr: bool) -> String {
+    pub(super) fn extract_operand_text(
+        &mut self, 
+        parent_id: &usize, 
+        in_self_ptr: bool
+    ) -> String {
         match self.curr_inst[*parent_id].clone() {
-            inst::Inst::Num { value, .. } => self.asm_fmt.get_fmt_num(&value),
+            inst::Inst::Num { value, .. } => {
+                self.asm_fmt.get_fmt_num(&value)
+            }
             inst::Inst::GetPtr { size: _, stk } => {
                 // スタック上に置かれた値そのもの(値が置かれているメモリ)
                 // を指すオペランドを、`%rbp`からのオフセット`stk`を使って生成する
-                self.asm_fmt.fmt_ref_operand(&"%rbp".to_string(), &stk)
+                self.asm_fmt.fmt_ref_operand(
+                    &"%rbp".to_string(), 
+                    &stk
+                )
             }
             inst::Inst::Param(param) => {
                 // `asm_emitter/operand_txt/`に記述
                 self.param_ref(&param.name)
             }
             inst::Inst::AssignVar { ref name, .. } => {
-                let var_info = self.var_hash_map.get(&name.to_string()).unwrap();
-                // ポインタ型の変数はアドレス(常に8byte)を保持するため、
-                // 32bitレジスタ(`%ecx`など)ではなく64bitレジスタ
-                // (`%rcx`など)として参照する必要がある。
-                // ポインタでなければ、変数自身の型のサイズをそのまま使う
-                // (以前はここが常にDQ(64bit)決め打ちになっており、
-                //  例えば`int`型の変数でも`%rcx`のような64bitレジスタ
-                //  として参照されてしまっていた)
-                let size = if var_info.size.is_pointer().is_some() {
-                    Size::DQ
-                } else {
-                    var_info.size.clone()
-                };
+                let var_info = self.var_hash_map
+                    .get(&name.to_string())
+                    .unwrap();
+                let size =
+                    if var_info
+                        .size
+                        .is_pointer()
+                        .is_some() 
+                    {
+                        Size::DQ
+                    } else {
+                        var_info.size.clone()
+                    };
                 self.asm_fmt.get_fmt_reg(&var_info.reg, &size)
             }
             // 配列にアクセス
@@ -422,8 +485,19 @@ impl AsmEmitter {
             }
             inst::Inst::Block(name) => name.to_string(),
             inst::Inst::ExpectJmp(name) => name.to_string(),
-            inst::Inst::Struct { mem, .. } => self.emit_struct_ini_asm(mem, in_self_ptr),
-            inst::Inst::MemoryValue(inst::MemoryInst::Memory { kind, size, .. }) => {
+            inst::Inst::Struct { mem, .. } => {
+                self.emit_struct_ini_asm(
+                    mem, 
+                    in_self_ptr
+                )
+            }
+            inst::Inst::MemoryValue(
+                inst::MemoryInst::Memory { 
+                    kind, 
+                    size, 
+                    .. 
+                }) => 
+            {
                 // `asm_emitter/operand_txt/`に記述
                 self.ref_mem_value_txt(&kind, &size, &parent_id)
             }
@@ -431,7 +505,9 @@ impl AsmEmitter {
                 // `asm_emitter/operand_txt/`に記述
                 self.ref_struct_txt(&src, &pos)
             }
-            inst::Inst::GetAddress(index) => self.extract_operand_text(&index.clone(), in_self_ptr),
+            inst::Inst::GetAddress(index) => {
+                self.extract_operand_text(&index.clone(), in_self_ptr)
+            }
             // 配列リテラル自体を値として参照する場合
             // (例: 変数に束縛されずそのまま関数の引数などに使われる`{1,2,3}`)
             inst::Inst::InitArr(ids) => {
@@ -439,35 +515,30 @@ impl AsmEmitter {
                 self.init_arr_txt::<false>(&ids, in_self_ptr);
                 String::new()
             }
-            inst::Inst::CallFunc(call_func_info) => {
-                // `emit_call_func`は引数を積む`mov`と`call`命令を含む
-                // 「複数行のアセンブリ文字列」を返す。これをそのまま
-                // `{src1}`などのオペランドとして埋め込んでしまうと、
-                // `mov call new\n, %ecx`のような壊れたコードになる。
-                // そのため呼び出し自体は先に`asm_text`へ積んでおき、
-                // 呼び出し規約上戻り値が置かれるレジスタ(`Ret`と同じ
+            inst::Inst::CallFunc(call_fn_info) => {
                 // レジスタ0番、`%eax`など)をオペランドとして返す
-                if call_func_info.parent == crate::ir::IS_ASSIGN_EXPR {
-                    let call_asm = self.emit_call_func(&call_func_info);
+                if call_fn_info.parent == crate::ir::IS_ASSIGN_EXPR {
+                    let call_asm = self.emit_call_func(
+                        &call_fn_info
+                    );
                     self.asm_text.push_str(&call_asm);
                     self.asm_fmt.get_fmt_reg(&0, &Size::DQ)
                 } else {
                     String::new()
                 }
             }
-            // ポインタの指す先を参照する(`*p` / `[p]`)
-            //
-            // `GetAddress`と対になる命令で、`GetAddress`がアドレスを求める
-            // 対象の値をそのまま参照する(`Pointer(GetAddress(x))`は`x`
-            // 自身を指すことになるため)のと同様に、参照先の値を
-            // そのまま取り出す。これにより
-            // - 読み込み: `c: int = [b]` (`b`が指すメモリの値をコピーする)
-            // - 書き込み: `[b] = 20` (`b`が指すメモリに値を書き込む)
-            // のどちらの場合でも、実際に値が置かれているメモリ/レジスタの
-            // オペランドを解決できる
-            inst::Inst::Pointer(index) => self.extract_operand_text(&index.clone(), in_self_ptr),
+            inst::Inst::Pointer(index) => {
+                self.extract_operand_text(
+                    &index.clone(),
+                    in_self_ptr
+                )
+            }
             t => {
-                if let Some(result) = self.last_inst_idx.iter().find(|i| &i.0 == parent_id) {
+                if let Some(result) = self
+                    .last_inst_idx
+                    .iter()
+                    .find(|i| &i.0 == parent_id) 
+                {
                     // レジスタの文字列を取得
                     self.asm_fmt.get_fmt_reg(&result.1, &Size::DQ)
                 } else {
@@ -477,7 +548,10 @@ impl AsmEmitter {
         }
     }
 
-    pub(super) fn format_expr_inst(&mut self, expr: &inst::ExprInst) -> String {
+    pub(super) fn format_expr_inst(
+        &mut self, 
+        expr: &inst::ExprInst
+    ) -> String {
         let key = match expr.kind {
             inst::ExprKind::Add => "add",
             inst::ExprKind::Sub => "sub",
@@ -505,11 +579,6 @@ impl AsmEmitter {
             | inst::ExprKind::Equal => "cmp",
         };
 
-        // `DEFERRED_REG_FMT_OPS`に含まれる演算子(`*`/`/`/`%`)は、
-        // 結果を格納するレジスタの適切なサイズがまだ決まっていないため、
-        // ひとまず番号だけのプレースホルダーを埋め込んでおく。
-        // それ以外の演算子は、これまで通りその場でDD(32bit)として
-        // レジスタ名を確定させる。
         let dst_text = if DEFERRED_REG_FMT_OPS.contains(&expr.kind) {
             Self::insert_fmt_reg_placeholder(&self.reg_idx)
         } else {
@@ -524,41 +593,26 @@ impl AsmEmitter {
             .replace("{src2}", &self.extract_operand_text(&expr.rs, false))
             .to_string();
 
-        // どちらかのオペランドがメモリ上の値(スタック/静的領域の変数)を
-        // 参照している場合、そのサイズを採用する。そうでなければ、
-        // これまで通り既定のDD(32bit)を使う。
         let resolved_size = self
-            .check_node_is_memory_value(&expr.ls)
-            .or_else(|| self.check_node_is_memory_value(&expr.rs));
+            .check_node_is_mem_val(&expr.ls)
+            .or_else(|| self.check_node_is_mem_val(&expr.rs));
 
-        // どちらかのオペランドがメモリ上の値(スタック/静的領域の変数)を
-        // 参照している場合、そのサイズに合わせてニーモニックへ
-        // サイズの接尾辞(`movl`/`subl`など)を付ける。
-        // (テンプレートは通常「一旦movでdstに値を置いてから演算する」
-        //  という2行構成になっているため、両方のニーモニックを
-        //  調整する必要がある)
         if let Some(ref size) = resolved_size {
             formated = self.asm_fmt.fmt_mnemonic_resize("mov", &formated, size);
             formated = self.asm_fmt.fmt_mnemonic_resize(mnemonic, &formated, size);
         }
 
-        // `DEFERRED_REG_FMT_OPS`に含まれる演算子の場合、先ほど番号
-        // だけ埋め込んでおいたプレースホルダーを、ここで確定した
-        // サイズ(メモリ上の値でなければDD)を使って実際のレジスタ名へ
-        // 展開する。
         if DEFERRED_REG_FMT_OPS.contains(&expr.kind) {
             let size = resolved_size.unwrap_or(Size::DQ);
             formated = self.replace_insert_fmt_reg(&formated, &size);
         }
 
-        if self.reserved_label_name.is_some() && formated.contains("{label}") {
-            // 実際に`{label}`を使うテンプレートの場合のみ予約を消費する。
-            // (以前は`Option::take`を無条件に呼んでいたため、`{label}`を
-            //  含まない中間の式(例: `n % 15`の剰余計算)を先に処理した
-            //  際に、まだ使われていないラベルの予約が捨てられてしまい、
-            //  本来ラベルを埋め込むべき比較式の`{label}`が置換されない
-            //  まま出力される、という不具合があった)
-            let name = self.reserved_label_name.take().unwrap();
+        if self.reserved_label_name.is_some() 
+            && formated.contains("{label}") 
+        {
+            let name = self.reserved_label_name
+                .take()
+                .unwrap();
             formated.replace("{label}", &name)
         } else {
             formated

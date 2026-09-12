@@ -38,7 +38,9 @@ impl AsmEmitter {
     /// このプレースホルダーは、まだ実際のレジスタ名(サイズ込みの
     /// `%eax`のような文字列)へ展開されておらず、後で
     /// [`Self::replace_insert_fmt_reg`]によって展開される。
-    pub fn insert_fmt_reg_placeholder(reg_num: &usize) -> String {
+    pub fn insert_fmt_reg_placeholder(
+        reg_num: &usize
+    ) -> String {
         format!("%{{{}}}", reg_num)
     }
 }

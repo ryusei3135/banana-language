@@ -10,43 +10,59 @@ impl AsmEmitter {
     /// `gen/asm_emitter.rs`の`extract_operand_text`から、関数呼び出しの
     /// 結果を値として使う(戻り値を任意のレジスタへ代入する)際にも
     /// 使われるため`pub(super)`にしている
-    pub(super) fn emit_call_func(&mut self, meta_data: &inst::CallFuncMetaData) -> String {
+    pub(super) fn emit_call_func(
+        &mut self, 
+        meta_data: &inst::CallFuncMetaData
+    ) -> String {
         // 生成するアセンブリコード
         let mut call_func = String::new();
 
-        for (index, param) in meta_data.params.iter().enumerate() {
+        for (index, param) in meta_data
+            .params
+            .iter()
+            .enumerate() 
+        {
+            // 引数の実際の型のサイズ
+            // (レジスタの取得だけでなく、後段のニーモニックの
+            //  サイズ決定にも同じサイズを使う必要がある)
+            let param_ty = self.curr_inst[*param]
+                .get_param_ty()
+                .unwrap();
             // 引数のレジスタを取得
             let param_reg = self.asm_fmt.get_fmt_param::<String>(
                 &index, 
-                self.curr_inst[*param]
-                    .get_param_ty()
-                    .unwrap()
+                param_ty.clone()
             );
             // 引数のレジスタと値のidを挿入
-            let src1_idx = if let Some(struct_idx) = self.resolve_struct_idx(param) {
+            let src1_idx = if let Some(struct_idx) = self
+                .resolve_struct_idx(param) 
+            {
                 struct_idx
             } else {
                 *param
             };
 
-            // 引数が`Inst::GetAddress`(構造体のポインタを`self`として
-            // 渡す場合など、`a.add()`の`self`に相当する`GetAddress(Var(a))`)
-            // の場合、渡すべきなのは変数`a`の「値」ではなく「アドレス」
-            // である。これを常に`mov`で組み立てると、アドレスを計算せず
-            // 値をそのままレジスタへコピーしてしまう
-            // (`mov 位置(%rbp), %rdi`のような誤ったコード)。
-            // アドレスを求める場合は`mov`ではなく`lea`
-            // (テンプレート上のキーは`address`)を使う必要がある。
             let opcode = if self.curr_inst[*param].is_pointer() {
                 "address"
             } else {
                 "mov"
             };
 
-            let asm = self.asm_fmt
+            let mut asm = self.asm_fmt
                 .get_opcode_tmpl(opcode)
                 .replace("{dst}", &param_reg)
                 .replace("{src1}", &self.extract_operand_text(&src1_idx, false));
+            let resize_size = if opcode == "address" {
+                Size::DQ
+            } else {
+                param_ty
+            };
+            asm = self.asm_fmt
+                .fmt_mnemonic_resize(
+                    opcode, 
+                    &asm, 
+                    &resize_size
+                );
             call_func.push_str(&asm);
         }
         call_func.push_str(&self.asm_fmt.get_call_func_fmt(&meta_data.name));
@@ -75,7 +91,12 @@ impl AsmEmitter {
         if func_meta_data.1.stk_size != 0 {
             // 予約されたサイズ分確保する
             self.asm_text
-                .push_str(&self.asm_fmt.gen_stack_frame(func_meta_data.1.stk_size));
+                .push_str(
+                    &self.asm_fmt
+                        .gen_stack_frame(
+                            func_meta_data.1.stk_size
+                        )
+                    );
         } else {
             if &func_meta_data.0 != "_start" {
                 self.asm_text
@@ -161,9 +182,9 @@ impl AsmEmitter {
                         // であれば、専用のフォーマット(`get_ptr`)で
                         // アドレスのオペランドを組み立てる
                         let text = if self.get_var_ty(&name).is_pointer().is_some() {
-                            self.assign_value_ty_is_ptr(current_reg, value, this_is_self)
+                            self.assign_val_ty_is_ptr(current_reg, value, this_is_self)
                         } else {
-                            self.assign_value_is_not_ptr(current_reg, value, this_is_self)
+                            self.assign_val_is_not_ptr(current_reg, value, this_is_self)
                         };
 
                         if self.expr_vars.iter().find(|v| v == &name).is_some() {
@@ -192,14 +213,6 @@ impl AsmEmitter {
                     self.mem_value_ir(mem_value, this_is_self);
                 }
                 inst::Inst::Param(param) => {
-                    // 引数の実際の型のサイズを使う
-                    // (以前は常にDQ(64bit)決め打ちになっており、例えば
-                    //  `int`型の引数でも64bitレジスタとして扱われて
-                    //  いたため、後で参照する際のサイズも変数自身の
-                    //  型ではなく常に64bitになってしまっていた。
-                    //  ポインタ型は`get_fmt_reg`側で自動的に64bit
-                    //  レジスタとして扱われるため、ここで特別扱いする
-                    //  必要はない)
                     let ty = node.get_param_ty().unwrap();
                     // 引数に使うレジスタを取得する
                     let reg_num = self.asm_fmt.get_fmt_param::<usize>(&param.num, ty.clone());

@@ -1,6 +1,7 @@
 use super::*;
 
 impl AsmEmitter {
+    /// メモリに値を書き込むアセンブリ言語を生成
     pub(super) fn write_mem(
         &mut self,
         name: &String,
@@ -36,13 +37,6 @@ impl AsmEmitter {
         // 配列の変数名)の型(`Pointer{ty}`/`Array{size,..}`)がそのまま
         // 書き込む値のサイズを表しているため、`get_var_ty(&name)`で
         // 問題なかった。
-        //
-        // しかし`a.[c 0] = 10`(`Inst::RefStruct`)のケースでは、`name`は
-        // メンバーではなく構造体変数自体(`a`)の名前であり、その型は
-        // `Size::Struct(..)`になる。これは`fmt_mnemonic_resize`が
-        // 扱えるサイズ(DB/DW/DD/DQ/Array/Pointer)ではないためパニックして
-        // しまう。この場合は変数の型ではなく、実際に書き込む値
-        // (`Inst::Num`)自身が持つサイズを使う必要がある。
         let mnemonic_size = match &self.curr_inst[*dst] {
             inst::Inst::RefStruct { .. } => match &self.curr_inst[*value] {
                 inst::Inst::Num { size, .. } => size.clone(),
@@ -55,7 +49,7 @@ impl AsmEmitter {
         self.asm_text.push_str(&text);
     }
 
-    pub(super) fn assign_value_ty_is_ptr(
+    pub(super) fn assign_val_ty_is_ptr(
         &mut self,
         current_reg: usize,
         value: &usize,
@@ -85,12 +79,17 @@ impl AsmEmitter {
         };
 
         self.asm_fmt
-            .get_opcode_tmpl("address")
-            .replace("{dst}", &dst_reg)
-            .replace("{src1}", &ptr_operand)
+            .fmt_mnemonic_resize(
+            "address",
+            &self.asm_fmt
+                .get_opcode_tmpl("address")
+                .replace("{dst}", &dst_reg)
+                .replace("{src1}", &ptr_operand),
+                &Size::DQ
+            )
     }
 
-    pub(super) fn assign_value_is_not_ptr(
+    pub(super) fn assign_val_is_not_ptr(
         &mut self,
         current_reg: usize,
         value: &usize,

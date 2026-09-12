@@ -46,12 +46,13 @@ impl MngAsmFmt {
     /// - usizeの場合はレジスタの番号が返される
     /// ## 引数
     /// - param_idx = 引数の場所
-    pub fn get_fmt_param<R: 'static>(
+    pub(in crate::gen) fn get_fmt_param<R: 'static>(
         &self, 
         param_idx: &usize, 
         size: Size
     ) -> R {
-        if TypeId::of::<R>() == TypeId::of::<String>() {
+        if TypeId::of::<R>() == TypeId::of::<String>()
+        {
             let result: Box<dyn Any> = Box::new(
                 self.get_fmt_reg(
                         &self.param_fmt[*param_idx], 
@@ -59,16 +60,26 @@ impl MngAsmFmt {
                     )
                     .to_string(),
             );
-            result.downcast::<R>().ok().map(|b| *b).unwrap()
+            result.downcast::<R>()
+                .ok()
+                .map(|b| *b)
+                .unwrap()
         } else if TypeId::of::<R>() == TypeId::of::<usize>() {
             let result: Box<dyn Any> = Box::new(self.param_fmt[*param_idx]);
-            result.downcast::<R>().ok().map(|b| *b).unwrap()
+            result.downcast::<R>()
+                .ok()
+                .map(|b| *b)
+                .unwrap()
         } else {
             panic!("この型は無効です,")
         }
     }
 
-    pub fn fmt_ref_operand(&self, reg: &String, size: &usize) -> String {
+    pub fn fmt_ref_operand(
+        &self, 
+        reg: &String, 
+        size: &usize
+    ) -> String {
         self.fmt
             .fmt
             .ref_stack
@@ -188,11 +199,13 @@ impl MngAsmFmt {
         format!(".align 4\n{}: .long {}\n", label, value.replace("$", ""))
     }
 
+    #[inline(always)]
     pub fn get_global_fmt(&self, name: &String) -> String {
         self.fmt.fmt.global.replace("{name}", name)
     }
 
     /// 静的領域の変数に%ripをつけて返す
+    #[inline(always)]
     pub fn fmt_static_var_rip(&self, name: &String) -> String {
         self.fmt.fmt.static_var.replace("{name}", name)
     }
@@ -221,15 +234,21 @@ impl MngAsmFmt {
     }
 
     /// 数字のフォーマット
+    #[inline(always)]
     pub fn get_fmt_num(&self, value: &String) -> String {
         self.fmt.fmt.num.replace("{}", value).to_string()
     }
 
+    #[inline(always)]
     pub fn get_call_func_fmt(&self, func_name: &String) -> String {
         self.fmt.func.call.replace("{name}", func_name)
     }
 
-    pub fn get_fmt_reg(&self, reg_num: &usize, size: &Size) -> String {
+    pub fn get_fmt_reg(
+        &self, 
+        reg_num: &usize, 
+        size: &Size
+    ) -> String {
         let reg = match &size {
             Size::DB => &self.reg_fmt.db,
             Size::DW => &self.reg_fmt.dw,
@@ -245,7 +264,29 @@ impl MngAsmFmt {
             .to_string()
     }
 
+    /// レジスタ文字列からレジスタのサイズを取得する
+    pub fn get_reg_size(
+        &self, 
+        reg_name: &str
+    ) -> Option<Size> {
+        for (size, registers) in [
+            (Size::DB, &self.reg_fmt.db),
+            (Size::DW, &self.reg_fmt.dw),
+            (Size::DD, &self.reg_fmt.dd),
+            (Size::DQ, &self.reg_fmt.dq),
+        ] {
+            for register in registers {
+                let formatted = self.fmt.fmt.reg.replace("{}", register);
+                if formatted == reg_name {
+                    return Some(size);
+                }
+            }
+        }
+        None
+    }
+
     /// 確保されているレジスタの本数
+    #[inline(always)]
     pub fn reg_count(&self) -> usize {
         self.reg_fmt.dq.len()
     }
@@ -266,6 +307,7 @@ impl MngAsmFmt {
         result
     }
 
+    #[inline(always)]
     pub fn inline_asm_list(&self) -> Vec<String> {
         self.asm_setting.as_ref().unwrap().get_inline_asm_list()
     }

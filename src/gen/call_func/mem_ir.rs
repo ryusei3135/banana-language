@@ -10,52 +10,22 @@ impl AsmEmitter {
         name: &Option<String>,
         this_is_self: bool,
     ) {
-        // `a: Name = Name::new()`のように、構造体を返す関数の戻り値を
-        // ローカル変数へ束縛する場合。
-        //
-        // `Name::new()`のようなコンストラクタ呼び出しは(`ir/builder/
-        // scope.rs`によって)呼び出し元があらかじめ確保したスタック領域の
-        // アドレスを暗黙の第一引数として渡し、呼び出し先はそのアドレスへ
-        // 直接構造体を書き込む規約になっている。そのため、呼び出し後に
-        // 戻り値(そのアドレス自身)を改めて別のレジスタへコピーする必要は
-        // なく、変数`a`は「呼び出し時に渡したのと同じ`%rbp`相対の
-        // メモリ位置」をそのまま指すべきである。
-        //
-        // 以前はここが他の(スカラーな)`Mov`と同じ経路を通っていたため、
-        // 戻り値を32bitレジスタへコピーする誤ったコードが生成され、
-        // 以降の構造体メンバーへのアクセスも`%rbp`ではなくそのレジスタ
         // 経由の間接参照になってしまっていた。
         if let types::Size::Struct(_) = size {
             // 呼び出し自体(`lea`+`call`)は副作用として`self.asm_text`へ
             // 積まれる。戻り値のオペランド文字列自体は構造体には
             // 使えないので捨てる
-            let _ = self.extract_operand_text(src, this_is_self);
-            if let inst::Inst::Struct { mem, is_self, .. } = self.curr_inst[*src].clone() {
-                // `emit_struct_ini_asm`はメンバーを書き込みながら
-                // `self.stk_use_counter`を進めていくため、呼び出し後
-                // では構造体自身の先頭オフセット(`%rbp`から見た位置)が
-                // 分からなくなってしまう。呼び出し前の値を控えておき、
-                // それをこの変数の実体の位置として登録する
-                let struct_stk_offset = self.stk_use_counter;
-                let ini_asm = 
-                    self.emit_struct_ini_asm(mem, is_self);
-                self.asm_text.push_str(
-                    ini_asm.as_str()
-                );
-                if let Some(var_name) = name {
-                    self.insert_var_info(
-                        var_name,
-                        asm_emitter::VarIndexInfo::new_stack(
-                            &struct_stk_offset,
-                            &size,
-                            dst,
-                        ),
-                    );
-                }
+            let _ = self.extract_operand_text(
+                src, 
+                this_is_self
+            );
+            if self.struct_mem(name, size, src, dst).is_none() {
                 return ();
             }
 
-            let inst::Inst::CallFunc(meta_data) = self.curr_inst[*src].clone() else {
+            let inst::Inst::CallFunc(meta_data) = 
+                self.curr_inst[*src].clone() else 
+            {
                 panic!("構造体を返す初期化式はコンストラクタ呼び出しである必要があります: {:?}", self.curr_inst[*src]);
             };
             let self_arg_idx = *meta_data
@@ -72,20 +42,33 @@ impl AsmEmitter {
             if let Some(var_name) = name {
                 self.insert_var_info(
                     var_name,
-                    asm_emitter::VarIndexInfo::new_stack(&stk, &size, dst),
+                    asm_emitter::VarIndexInfo::new_stack(
+                        &stk, 
+                        &size, 
+                        dst
+                    ),
                 );
             }
             return;
         }
 
-        if size.is_pointer().is_none() && self.data_map.iter().find(|v| &v.0 == src).is_some() {
+        if size.is_pointer().is_none() 
+            && self.data_map
+                .iter()
+                .find(|v| &v.0 == src)
+                .is_some()
+        {
             // 子のノードがstatic領域の値で、かつ宣言先の型がポインタで
             // ない場合のみ、変数名だけを登録する(この場合は変数の
             // 実体が静的領域そのものであり、レジスタへ値をロード
             // する必要がないため)。
             self.insert_var_info(
                 &name.as_ref().unwrap(),
-                asm_emitter::VarIndexInfo::new(&self.reg_idx, &size, dst),
+                asm_emitter::VarIndexInfo::new(
+                    &self.reg_idx, 
+                    &size, 
+                    dst
+                ),
             );
         } else {
             self.reg_idx += 1;
@@ -156,7 +139,13 @@ impl AsmEmitter {
                 dst,
             } => {
                 if kind == &inst::MemoryKind::Static {
-                    self.is_static_var(src, size, &dst, name, this_is_self);
+                    self.is_static_var(
+                        src, 
+                        size, 
+                        &dst, 
+                        name, 
+                        this_is_self
+                    );
                 } else {
                     let base = match &self.curr_inst[*dst] {
                         inst::Inst::Pointer(..)
@@ -215,16 +204,62 @@ impl AsmEmitter {
         this_is_self: bool,
     ) {
         println!("src/gen/call_func/MemoryValue");
-        let value = self.extract_operand_text(&src.last().unwrap(), this_is_self);
+        let value = self.extract_operand_text(
+            &src.last().unwrap(), 
+            this_is_self
+        );
         let label_name = format!("M{}", self.data_idx.to_string());
-        let fmt_data = self.asm_fmt.get_static_num_fmt(&value, &label_name, size);
+        let fmt_data = self.asm_fmt
+            .get_static_num_fmt(&value, &label_name, size);
         self.data_sec_text.push_str(&fmt_data);
         self.data_map.push((*dst, label_name));
         self.data_idx += 1;
         // 子のノードがstaticりょいきの値なので、変数名だけ登録する
         self.insert_var_info(
             &name,
-            asm_emitter::VarIndexInfo::new(&self.reg_idx, &size, dst),
+            asm_emitter::VarIndexInfo::new(
+                &self.reg_idx, 
+                &size, 
+                dst
+            ),
         );
+    }
+
+    fn struct_mem(
+        &mut self, 
+        name: &Option<String>, 
+        size: &types::Size,
+        src: &usize,
+        dst: &usize,
+    ) -> Option<()> {
+        if let inst::Inst::Struct { 
+            mem, 
+            is_self, 
+            .. 
+        } = self.curr_inst[*src].clone() {
+            // `emit_struct_ini_asm`はメンバーを書き込みながら
+            // `self.stk_use_counter`を進めていくため、呼び出し後
+            // では構造体自身の先頭オフセット(`%rbp`から見た位置)が
+            // 分からなくなってしまう。呼び出し前の値を控えておき、
+            // それをこの変数の実体の位置として登録する
+            let struct_stk_offset = self.stk_use_counter;
+            let ini_asm = 
+                self.emit_struct_ini_asm(mem, is_self);
+            self.asm_text.push_str(
+                ini_asm.as_str()
+            );
+            if let Some(var_name) = name {
+                self.insert_var_info(
+                    var_name,
+                    asm_emitter::VarIndexInfo::new_stack(
+                        &struct_stk_offset,
+                        &size,
+                        dst,
+                    ),
+                );
+            }
+            return None;
+        }
+        Some(())
     }
 }

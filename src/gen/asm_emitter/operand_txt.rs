@@ -3,24 +3,34 @@
 use super::*;
 
 impl AsmEmitter {
-    pub(super) fn param_ref(&mut self, param_name: &String) -> String {
-        let var_info = self.var_hash_map.get(&param_name.to_string()).unwrap();
+    pub(super) fn param_ref(
+        &mut self, 
+        param_name: &String
+    ) -> String {
+        let var_info = self.var_hash_map
+            .get(&param_name.to_string())
+            .unwrap();
 
         if let Some(ty) = var_info.size.is_pointer() {
             // ポインタ型はアドレス(常に8byte)を保持するため、
             // 64bitレジスタ(`%rcx`など)を経由してメモリを参照する
-            let reg = self.asm_fmt.get_fmt_reg(&var_info.reg, &Size::DQ);
+            let reg = self.asm_fmt.get_fmt_reg(
+                &var_info.reg, 
+                &Size::DQ
+            );
             self.asm_fmt.fmt_ref_operand(&reg, &ty.to_bytes())
         } else {
-            // ポインタでなければ、変数自身の型のサイズをそのまま使う
-            // (以前はここが常にDQ(64bit)決め打ちになっており、
-            //  例えば`int`型の引数でも`%rcx`のような64bitレジスタ
-            //  として参照されてしまっていた)
-            self.asm_fmt.get_fmt_reg(&var_info.reg, &var_info.size)
+            self.asm_fmt.get_fmt_reg(
+                &var_info.reg, 
+                &var_info.size
+            )
         }
     }
 
-    pub(super) fn string_mem_ref(&mut self, parent_id: &usize) -> String {
+    pub(super) fn string_mem_ref(
+        &mut self, 
+        parent_id: &usize
+    ) -> String {
         let label = self
             .data_map
             .iter()
@@ -28,11 +38,6 @@ impl AsmEmitter {
             .unwrap()
             .1
             .clone();
-        // 文字列リテラルは静的領域(データセクション)に置かれるため、
-        // 他の静的変数と同様に`%rip`相対でアドレッシングする
-        // (以前はラベル名をそのまま返していたため、`lea`でアドレスを
-        //  計算する際に`lea Msg, %rax`のような不正なアドレッシングに
-        //  なっていた)
         self.asm_fmt.fmt_static_var_rip(&label)
     }
 
@@ -44,27 +49,16 @@ impl AsmEmitter {
         index: &usize,
         in_self_ptr: bool,
     ) -> String {
-        // `index`は添字の数字そのものではなく、その数字を保持する
-        // `Inst::Num`ノードのid(`curr_inst`内のインデックス)。
-        // これを解決せずそのまま計算に使ってしまうと、添字ではなく
-        // 「何番目に生成された命令か」という無関係な数字で
-        // オフセットが計算されてしまい、間違った位置(あるいは
-        // 全く無関係なメモリ)を指すオペランドが生成されてしまう
         let index_value = match &self.curr_inst[*index] {
             inst::Inst::Num { value, .. } => value
                 .parse::<usize>()
                 .expect("配列の添字は数字である必要があります"),
             t => panic!("配列の添字には数字のノードが必要です: {:?}", t),
         };
-
-        // `[ptr 5]`のようにポインタ変数へ添字アクセスする場合は、
-        // ポインタ自身のサイズ(常に8byte)ではなく、ポインタが指す先の
-        // 型(`int*`なら`int`)のサイズを1要素分のオフセットとして
-        // 使う必要がある。また、ポインタは`ptr`自身がすでに先頭要素の
-        // アドレスを指しているため、スタック上の配列(`[arr 0]`、先頭要素の
-        // 前に1要素分の余白がある)と違ってオフセットに`+size`は加えない
         let pos = {
-            let var_info = self.var_hash_map.get(&name.to_string()).unwrap();
+            let var_info = self.var_hash_map
+                .get(&name.to_string())
+                .unwrap();
             if let Some(pointee) = var_info.size.is_pointer() {
                 pointee.to_bytes() * index_value
             } else {
@@ -108,9 +102,13 @@ impl AsmEmitter {
         }
     }
 
-    pub(super) fn gen_mov_code(&mut self, name: &Option<String>, src: &usize) -> String {
+    pub(super) fn gen_mov_code(
+        &mut self, 
+        name: &Option<String>, 
+        src: &usize
+    ) -> String {
         let Some(var_name) = name else {
-            panic!();
+            panic!()
         };
 
         let var = self
@@ -119,42 +117,21 @@ impl AsmEmitter {
             .unwrap_or_else(|| panic!("this var is not found -> {}", var_name));
 
         if var.is_stack {
-            // `a: Name = Name::new()`のように、構造体が`%rbp`相対の
-            // メモリに直接置かれている変数の場合。
-            // レジスタは経由せず、`%rbp`からのオフセットをそのまま
-            // オペランドの文字列として返す(呼び出し元がこれを
-            // `lea`の`{src1}`として使えば構造体のアドレスに、
-            // そのまま使えば構造体の先頭位置になる)
-            return self.asm_fmt.fmt_ref_operand(&"%rbp".to_string(), &var.reg);
+            return self
+                .asm_fmt
+                .fmt_ref_operand(
+                    &"%rbp".to_string(), 
+                    &var.reg
+                );
         }
-
-        // ポインタ型の変数はアドレス(常に8byte)を保持するため、
-        // 32bitレジスタ(`%ecx`など)ではなく64bitレジスタ
-        // (`%rcx`など)として参照する必要がある。
-        // (`[ptr]`のようなポインタの参照先の解決は`GetAddress`/
-        //  `Pointer`を通ってこの関数まで辿り着くため、ここで
-        //  正しいレジスタ幅を選ばないと`(%ecx)`のような不正な
-        //  間接参照になってしまう)
         let (reg_num, is_ptr, var_size) =
             (var.reg, var.size.is_pointer().is_some(), var.size.clone());
-        // ポインタなら常に64bit、そうでなければ変数自身の型のサイズを使う
-        // (以前は非ポインタの場合に常にDD(32bit)決め打ちになっており、
-        //  例えば`char`や64bitの変数でもサイズが合わなくなっていた)
         let size = if is_ptr { Size::DQ } else { var_size };
-
-        // ポインタ型の変数は、宣言時に必ずアドレスをレジスタへ
-        // ロードするコードが生成されている(`mov_value_ir`を参照)。
-        // そのため、初期化式がstatic領域の値(文字列リテラルなど)
-        // だったとしても、ポインタ型であればラベルを直接返さず、
-        // 必ずそのレジスタを返す必要がある。
-        //
-        // 以前はここでポインタ型かどうかを見ていなかったため、
-        // `c: byte* = "hello world"`のような変数を`${c}`のように
-        // 後から参照すると、`c`のレジスタ(例:`%rax`)ではなく、
-        // 文字列データのラベル名(例:`M0`)がそのまま返ってしまい、
-        // `${c}`が意図通りに反映されない原因になっていた
         if !is_ptr {
-            if let Some(static_var) = self.data_map.iter().find(|v| &v.0 == src) {
+            if let Some(static_var) = self.data_map
+                .iter()
+                .find(|v| &v.0 == src) 
+            {
                 // static領域の変数を返す:
                 return static_var.1.clone();
             }
@@ -262,20 +239,10 @@ impl AsmEmitter {
         if !in_self_ptr {
             self.asm_text.push_str(txt.as_str());
         }
-
-        // 配列の先頭要素を指すオペランドを返す
-        //
-        // 以前はここが常に`%rbp`決め打ちだったため、`in_self_ptr`が
-        // `true`のとき(メソッド内で`Self`のフィールドとして配列を
-        // 直接書き込む場合、例: `ret Self { c: {0, 1, 2} }`)でも、
-        // 実際に要素を書き込んだベースレジスタ(`assign_reg` = `%rdi`
-        // など)ではなく`%rbp`を指すオペランドを返してしまっていた。
-        // これにより、呼び出し元(構造体のフィールドへの代入)が
-        // このオペランドを`src`として使うと、実際には値が置かれて
-        // いない`%rbp`側のアドレスを参照してしまい、壊れた
-        // アセンブリが生成されていた。要素の書き込みに使ったのと
-        // 同じ`assign_reg`を使うように修正する。
         self.asm_fmt
-            .fmt_ref_operand(&assign_reg, &head_offset.unwrap())
+            .fmt_ref_operand(
+                &assign_reg, 
+                &head_offset.unwrap()
+            )
     }
 }
