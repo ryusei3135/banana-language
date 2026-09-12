@@ -91,7 +91,9 @@ impl Regex {
     /// 正規表現パターンをコンパイルする。
     pub fn new(pattern: &str) -> Result<Regex, RegexError> {
         unsafe {
-            let c_pattern = CString::new(pattern).map_err(|e| {
+            let c_pattern = CString::new(pattern)
+                .map_err(
+            |e| {
                 RegexError(format!("パターンに NUL 文字が含まれています: {}", e))
             })?;
 
@@ -150,7 +152,14 @@ impl Regex {
         for pos in start..=chars.len() {
             let mut caps: Caps = vec![None; self.group_count + 1];
             let mut k: Box<Cont> = Box::new(|end, _caps: &mut Caps| Some(end));
-            if let Some(end) = match_node(nodes, self.root, chars, pos, &mut caps, &mut *k) {
+            if let Some(end) = match_node(
+                nodes, 
+                self.root, 
+                chars, 
+                pos, 
+                &mut caps, 
+                &mut *k
+            ) {
                 caps[0] = Some((pos, end));
                 return Some(caps);
             }
