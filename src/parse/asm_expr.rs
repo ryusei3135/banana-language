@@ -10,10 +10,6 @@
 //! そのため`${...}`の内容をそれらにそのまま渡すと、
 //! 先読みした瞬間にトークンが無く(EOF)、エラーとして
 //! 伝播してしまう。
-//!
-//! ここでは、EOFを許容する専用の先読み(`peek_tkn`/`advance_tkn`)
-//! を使い、通常の式(変数・数値・文字列・構造体のメンバー・
-//! ポインタの参照/アドレス取得・四則演算)を解析できるようにする。
 
 use super::*;
 
@@ -22,16 +18,19 @@ impl Parser {
     ///
     /// ## 引数
     /// - src `${}`の中に書かれていた文字列(例: `"x.y"`, `"*p"`)
-    pub(super) fn parse_asm_operand(src: &str) -> Result<node::Expr, err::ErrKind> {
+    pub(super) fn parse_asm_operand(
+        src: &str
+    ) -> Result<node::Expr, err::ErrKind> {
         let mut lexer = lex::Lexer::new();
         lexer.analy(&src.to_string()).unwrap();
 
         if lexer.gen_tkns.is_empty() {
-            // `${}`のように、中身が空だった場合。
-            // トークンが1つも無いので、`build_err_span`が前提とする
-            // 「現在位置の1つ前のトークン」が存在せず使えないため、
-            // 位置情報無し(0, 0)のエラーを直接組み立てる
-            return Err(crate::preproc_err_at!(err::Span::new(&0, &0), EmptyAsmOperand));
+            return Err(
+                crate::preproc_err_at!(
+                    err::Span::new(&0, &0), 
+                    EmptyAsmOperand
+                )
+            );
         }
 
         let mut parser = Parser::new();
@@ -50,7 +49,9 @@ impl Parser {
     }
 
     /// 加算・減算を含む式のエントリーポイント
-    pub(super) fn asm_operand_expr(&mut self) -> Result<node::Expr, err::ErrKind> {
+    pub(super) fn asm_operand_expr(
+        &mut self
+    ) -> Result<node::Expr, err::ErrKind> {
         self.asm_operand_add()
     }
 
@@ -127,7 +128,9 @@ impl Parser {
         }
     }
 
-    fn asm_operand_primary(&mut self) -> Result<node::Expr, err::ErrKind> {
+    fn asm_operand_primary(
+        &mut self
+    ) -> Result<node::Expr, err::ErrKind> {
         match self.current_tkn().clone() {
             lex::Tkn::Number(value) => {
                 self.advance_tkn();

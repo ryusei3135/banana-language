@@ -2,7 +2,7 @@ mod assign_var;
 mod mem_ir;
 
 use super::*;
-use crate::ir;
+use crate::ir::{self, types};
 
 impl AsmEmitter {
     /// 関数を呼び出す情報がある物を受け取りアセンブリ言語を生成する
@@ -48,15 +48,23 @@ impl AsmEmitter {
                 "mov"
             };
 
-            let mut asm = self.asm_fmt
-                .get_opcode_tmpl(opcode)
-                .replace("{dst}", &param_reg)
-                .replace("{src1}", &self.extract_operand_text(&src1_idx, false));
             let resize_size = if opcode == "address" {
                 Size::DQ
             } else {
                 param_ty
             };
+
+            let src1_text = self.extract_operand_text(
+                &src1_idx, 
+                &Some(resize_size)
+            );
+            let src1_text = self.asm_fmt
+                .resize_reg_operand(&src1_text, &resize_size);
+
+            let mut asm = self.asm_fmt
+                .get_opcode_tmpl(opcode)
+                .replace("{dst}", &param_reg)
+                .replace("{src1}", &src1_text);
             asm = self.asm_fmt
                 .fmt_mnemonic_resize(
                     opcode, 
@@ -171,7 +179,12 @@ impl AsmEmitter {
                     );
 
                     if is_mem_write {
-                        self.write_mem(name, &dst, &value, this_is_self);
+                        self.write_mem(
+                            name, 
+                            &dst, 
+                            &value, 
+                            &this_is_self
+                        );
                     } else {
                         // 通常の変数への再代入(`b = 10`など)
                         self.update_value_info(&name, &value);
@@ -182,9 +195,9 @@ impl AsmEmitter {
                         // であれば、専用のフォーマット(`get_ptr`)で
                         // アドレスのオペランドを組み立てる
                         let text = if self.get_var_ty(&name).is_pointer().is_some() {
-                            self.assign_val_ty_is_ptr(current_reg, value, this_is_self)
+                            self.assign_val_ty_is_ptr(current_reg, value, &this_is_self)
                         } else {
-                            self.assign_val_is_not_ptr(current_reg, value, this_is_self)
+                            self.assign_val_is_not_ptr(current_reg, value, &this_is_self)
                         };
 
                         if self.expr_vars.iter().find(|v| v == &name).is_some() {
@@ -194,7 +207,13 @@ impl AsmEmitter {
                     }
                 }
                 inst::Inst::Ret(idx) => {
-                    let ret_asm = self.format_line("mov", Some(&0), &idx, None, this_is_self);
+                    let ret_asm = self.format_line(
+                        "mov", 
+                        Some(&0), 
+                        &idx, 
+                        None, 
+                        &this_is_self
+                    );
                     self.asm_text.push_str(&ret_asm);
                     self.asm_text
                         .push_str(self.asm_fmt.func_frame_end().as_str());
@@ -206,7 +225,7 @@ impl AsmEmitter {
                     dst,
                     src,
                 } => {
-                    self.mov_value_ir(size, dst, src, &name, this_is_self);
+                    self.mov_value_ir(size, dst, src, &name, &this_is_self);
                 } // メモリに配置されている値の生成
                 inst::Inst::MemoryValue(mem_value) => {
                     // call_func/mem_ir.rs
@@ -215,7 +234,8 @@ impl AsmEmitter {
                 inst::Inst::Param(param) => {
                     let ty = node.get_param_ty().unwrap();
                     // 引数に使うレジスタを取得する
-                    let reg_num = self.asm_fmt.get_fmt_param::<usize>(&param.num, ty.clone());
+                    let reg_num = self.asm_fmt
+                        .get_fmt_param::<usize>(&param.num, ty.clone());
                     self.insert_var_info(
                         &param.name,
                         asm_emitter::VarIndexInfo::new(&reg_num, &ty, &param.dst),
@@ -243,3 +263,5 @@ impl AsmEmitter {
         }
     }
 }
+
+

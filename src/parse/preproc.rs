@@ -85,21 +85,31 @@ impl Parser {
         Ok(mod_path)
     }
 
+    #[inline(always)]
+    fn get_asm_name(
+        &mut self
+    ) -> Result<String, err::ErrKind> {
+        if let lex::Tkn::Name(asm_name) = self.next_tkn(vec!["name"])? 
+        {
+            Ok(asm_name)
+        } else {
+            crate::preproc_err!(self, NotFoundAsmName);
+        }
+    }
     /// ## 戻り値
     /// - Ok inlineアセンブラの名前
     fn build_asm_ast(
         &mut self
     ) -> Result<node::Group2Node, err::ErrKind> {
+        
         // #asm(...)なので、(以外が来たらエラー
-        if !matches!(self.next_tkn(vec!["not `(`"])?, lex::Tkn::LParen) {
+        if !matches!(
+            self.next_tkn(vec!["not `(`"])?, 
+            lex::Tkn::LParen
+    ) {
             crate::preproc_err!(self, ExpectedLParenAfterAsm);
         }
-
-        let asm_name = if let lex::Tkn::Name(asm_name) = self.next_tkn(vec!["name"])? {
-            asm_name
-        } else {
-            crate::preproc_err!(self, NotFoundAsmName);
-        };
+        let asm_name = self.get_asm_name()?;
 
         // #asm(...)なので、(以外が来たらエラー
         if !matches!(self.next_tkn(vec![")"])?, lex::Tkn::RParen) {
@@ -156,7 +166,8 @@ impl Parser {
         &mut self, 
         value: &String
     ) -> Result<node::InlineAsm, err::ErrKind> {
-        let inline_var = Regex::new(r"\$\{([^}]+)\}").unwrap(); // 一度だけコンパイルして使い回してOK
+        let inline_var = Regex::new(r"\$\{([^}]+)\}")
+            .unwrap(); // 一度だけコンパイルして使い回してOK
 
         let mut operands = Vec::<node::Expr>::new();
         let mut parse_err: Option<err::ErrKind> = None;

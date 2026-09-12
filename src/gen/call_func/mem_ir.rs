@@ -8,7 +8,7 @@ impl AsmEmitter {
         dst: &usize,
         src: &usize,
         name: &Option<String>,
-        this_is_self: bool,
+        this_is_self: &Option<types::Size>,
     ) {
         // 経由の間接参照になってしまっていた。
         if let types::Size::Struct(_) = size {
@@ -17,9 +17,15 @@ impl AsmEmitter {
             // 使えないので捨てる
             let _ = self.extract_operand_text(
                 src, 
-                this_is_self
+                &this_is_self
             );
-            if self.struct_mem(name, size, src, dst).is_none() {
+            if self.struct_mem(
+                    name, 
+                    size, 
+                    src, 
+                    dst
+                ).is_none() 
+            {
                 return ();
             }
 
@@ -83,9 +89,12 @@ impl AsmEmitter {
             // そのまま即値をレジスタへ書き込む
             let is_literal_num = matches!(self.curr_inst[*src], inst::Inst::Num { .. });
 
-            let formated = if size.is_pointer().is_some() && is_literal_num {
+            let formated = if size
+                .is_pointer()
+                .is_some() && is_literal_num 
+            {
                 let dst_reg = self.asm_fmt.get_fmt_reg(&reg, &Size::DQ);
-                let value_operand = self.extract_operand_text(&src, this_is_self);
+                let value_operand = self.extract_operand_text(&src, &this_is_self);
                 let text = self
                     .asm_fmt
                     .get_opcode_tmpl("mov")
@@ -128,7 +137,7 @@ impl AsmEmitter {
     pub(super) fn mem_value_ir(
         &mut self, 
         mem_value: &inst::MemoryInst, 
-        this_is_self: bool
+        this_is_self: Option<Size>
     ) {
         match mem_value {
             inst::MemoryInst::Memory {
@@ -153,7 +162,7 @@ impl AsmEmitter {
                         | inst::Inst::GetPtr { .. } => {
                             self.extract_operand_text(
                                 &dst, 
-                                this_is_self
+                                &this_is_self
                             )
                         }
                         _ => "%rbp".to_string(),
@@ -161,7 +170,7 @@ impl AsmEmitter {
 
                     let mut txt = String::new();
                     for idx in src.iter() {
-                        let value = self.extract_operand_text(&idx, this_is_self);
+                        let value = self.extract_operand_text(&idx, &this_is_self);
                         // スタックの場所を更新
                         // (この変数のオフセットは、これまで使用した
                         //  スタックのサイズ`stk_use_counter`に、
@@ -201,12 +210,12 @@ impl AsmEmitter {
         size: &ir::types::Size,
         dst: &usize,
         name: &String,
-        this_is_self: bool,
+        this_is_self: &Option<types::Size>,
     ) {
         println!("src/gen/call_func/MemoryValue");
         let value = self.extract_operand_text(
             &src.last().unwrap(), 
-            this_is_self
+            &this_is_self
         );
         let label_name = format!("M{}", self.data_idx.to_string());
         let fmt_data = self.asm_fmt

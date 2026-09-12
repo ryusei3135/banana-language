@@ -182,7 +182,11 @@ impl MngAsmFmt {
             .replace("{dst}", reg)
     }
 
-    pub fn get_str_fmt(&self, value: &String, label: &String) -> String {
+    pub fn get_str_fmt(
+        &self, 
+        value: &String, 
+        label: &String
+    ) -> String {
         self.fmt
             .fmt
             .string
@@ -285,6 +289,33 @@ impl MngAsmFmt {
         None
     }
 
+    /// 渡された文字列がレジスタのオペランド(`%eax`など)である場合、
+    /// 「同じレジスタ」の`size`版のオペランド文字列(`%rax`など)に
+    /// 変換して返す。
+    ///
+    /// `operand`がレジスタでない場合(即値やメモリ参照`-8(%rbp)`など)
+    /// は、`get_reg_size`が`None`を返すのでそのまま変更せず返す。
+    pub fn resize_reg_operand(
+        &self,
+        operand: &str,
+        size: &Size,
+    ) -> String {
+        for (_, registers) in [
+            (Size::DB, &self.reg_fmt.db),
+            (Size::DW, &self.reg_fmt.dw),
+            (Size::DD, &self.reg_fmt.dd),
+            (Size::DQ, &self.reg_fmt.dq),
+        ] {
+            for (reg_num, register) in registers.iter().enumerate() {
+                let formatted = self.fmt.fmt.reg.replace("{}", register);
+                if formatted == operand {
+                    return self.get_fmt_reg(&reg_num, size);
+                }
+            }
+        }
+        operand.to_string()
+    }
+
     /// 確保されているレジスタの本数
     #[inline(always)]
     pub fn reg_count(&self) -> usize {
@@ -293,10 +324,6 @@ impl MngAsmFmt {
 
     /// `(レジスタ番号, レジスタ名)`のペアを、確保されている
     /// 全レジスタ・全サイズ分列挙する。
-    ///
-    /// インラインアセンブラのテキストに直接書かれているレジスタ
-    /// (`%rax`など、オペランドのプレースホルダーではなく
-    /// ハードコードされている物)を検出するために使う。
     pub fn all_reg_names(&self) -> Vec<(usize, String)> {
         let mut result = Vec::new();
         for reg_idx in 0..self.reg_count() {

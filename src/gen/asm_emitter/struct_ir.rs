@@ -16,14 +16,24 @@ impl AsmEmitter {
                 panic!();
             };
 
+            let member_size = Some(size.clone());
+
             let value = self
-                .extract_operand_text(&value_idx, this_is_self)
+                .extract_operand_text(
+                    &value_idx, 
+                    &member_size
+                )
                 .to_string();
             if value.is_empty() {
                 let inst::Inst::InitArr(arr) = self.curr_inst[*value_idx].clone() else {
                     panic!();
                 };
-                struct_txt.push_str(self.init_arr_txt::<true>(&arr, this_is_self).as_str());
+                struct_txt.push_str(
+                    self.init_arr_txt::<true>(
+                        &arr, 
+                        &member_size
+                    ).as_str()
+                );
                 continue;
             }
             // このメンバー分を足した「累積」サイズ
@@ -41,7 +51,12 @@ impl AsmEmitter {
                 self.stk_use_counter + add_size
             };
 
-            let fmted = self.asm_fmt.get_fmt_struct_member(value, &size, &offset);
+            let fmted = self.asm_fmt
+                .get_fmt_struct_member(
+                    value, 
+                    &size, 
+                    &offset
+                );
 
             if this_is_self {
                 // 第一引数(`self`のポインタ)のレジスタを取得し、
@@ -53,10 +68,7 @@ impl AsmEmitter {
                 struct_txt.push_str(&fmted);
             }
         }
-        if !this_is_self {
-            // 新しくスタックを確保したのは自分自身の場合のみ加算する。
-            // (`self`のポインタ先に書き込むだけの場合は、呼び出し元が
-            //  既にスタックを確保済みなので、ここで加算してはいけない)
+        if this_is_self.is_some() {
             self.stk_use_counter += add_size;
         }
         return struct_txt;

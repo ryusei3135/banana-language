@@ -47,7 +47,7 @@ impl AsmEmitter {
         name: &String,
         dst: &usize,
         index: &usize,
-        in_self_ptr: bool,
+        this_is_self: &Option<types::Size>,
     ) -> String {
         let index_value = match &self.curr_inst[*index] {
             inst::Inst::Num { value, .. } => value
@@ -67,7 +67,10 @@ impl AsmEmitter {
             }
         };
 
-        let base = self.extract_operand_text(&dst, in_self_ptr);
+        let base = self.extract_operand_text(
+            &dst, 
+            &this_is_self
+        );
         self.asm_fmt.fmt_ref_operand(&base, &pos)
     }
 
@@ -179,10 +182,10 @@ impl AsmEmitter {
     pub(super) fn init_arr_txt<const RET_IS_ASM: bool>(
         &mut self,
         ids: &Vec<usize>,
-        in_self_ptr: bool,
+        this_is_self: &Option<types::Size>,
     ) -> String {
         // 代入する先が構造体などの自身のポインタの場合、引数のレジスタにする
-        let assign_reg = if in_self_ptr {
+        let assign_reg = if this_is_self.is_none() {
             self.asm_fmt.get_fmt_param::<String>(&0, Size::DQ)
         } else {
             "%rbp".to_string()
@@ -200,13 +203,13 @@ impl AsmEmitter {
         };
 
         let mut txt = String::new();
-        // 配列の先頭要素を書き込んだ直後のスタックオフセット。
-        // 配列は先頭の要素から順にスタックへ積んでいくため、
-        // 最初に確定したオフセットが配列全体の先頭を指すことになる
         let mut head_offset = None;
 
         for id in ids.iter() {
-            let value = self.extract_operand_text(id, in_self_ptr);
+            let value = self.extract_operand_text(
+                id, 
+                &this_is_self
+            );
 
             // スタックの場所を更新
             // (この要素のオフセットは、これまで使用したスタックのサイズ
@@ -236,7 +239,8 @@ impl AsmEmitter {
         if RET_IS_ASM {
             return txt;
         }
-        if !in_self_ptr {
+        // サイズがSelfポインタでない場合
+        if this_is_self.is_some() {
             self.asm_text.push_str(txt.as_str());
         }
         self.asm_fmt
