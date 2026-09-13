@@ -7,7 +7,7 @@ impl AsmEmitter {
         name: &String,
         dst: &usize,
         value: &usize,
-        this_is_self: &Option<types::Size>,
+        this_is_self: &SelfPtrInfo,
     ) {
         // 書き込み先のメモリのオペランド
         let dst_operand = self.extract_operand_text(dst, &this_is_self);
@@ -47,7 +47,7 @@ impl AsmEmitter {
         &mut self,
         current_reg: usize,
         value: &usize,
-        this_is_self: &Option<types::Size>,
+        this_is_self: &SelfPtrInfo,
     ) -> String {
         // ポインタ型の変数へ数値リテラル(`ptr = 0`のようなNULL代入)を
         // 再代入する場合は、アドレスを求める`lea`ではなく、ポインタの
@@ -90,7 +90,7 @@ impl AsmEmitter {
         &mut self,
         current_reg: usize,
         value: &usize,
-        this_is_self: &Option<types::Size>,
+        this_is_self: &SelfPtrInfo,
     ) -> String {
         let mnemonic = if self.curr_inst[*value]
             .is_pointer() 

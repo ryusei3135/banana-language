@@ -8,7 +8,7 @@ impl AsmEmitter {
         dst: &usize,
         src: &usize,
         name: &Option<String>,
-        this_is_self: &Option<types::Size>,
+        this_is_self: &SelfPtrInfo,
     ) {
         // 経由の間接参照になってしまっていた。
         if let types::Size::Struct(_) = size {
@@ -134,10 +134,10 @@ impl AsmEmitter {
         }
     }
 
-    pub(super) fn mem_value_ir(
+    pub(super) fn mem_val_ir(
         &mut self, 
         mem_value: &inst::MemoryInst, 
-        this_is_self: Option<Size>
+        this_is_self: &bool,
     ) {
         match mem_value {
             inst::MemoryInst::Memory {
@@ -147,13 +147,14 @@ impl AsmEmitter {
                 kind,
                 dst,
             } => {
+                let dst_size: SelfPtrInfo = size.wrap_dst_size();
+
                 if kind == &inst::MemoryKind::Static {
                     self.is_static_var(
                         src, 
-                        size, 
                         &dst, 
                         name, 
-                        this_is_self
+                        &size.wrap_dst_size()
                     );
                 } else {
                     let base = match &self.curr_inst[*dst] {
@@ -162,7 +163,7 @@ impl AsmEmitter {
                         | inst::Inst::GetPtr { .. } => {
                             self.extract_operand_text(
                                 &dst, 
-                                &this_is_self
+                                &dst_size
                             )
                         }
                         _ => "%rbp".to_string(),
@@ -170,7 +171,7 @@ impl AsmEmitter {
 
                     let mut txt = String::new();
                     for idx in src.iter() {
-                        let value = self.extract_operand_text(&idx, &this_is_self);
+                        let value = self.extract_operand_text(&idx, &dst_size);
                         // スタックの場所を更新
                         // (この変数のオフセットは、これまで使用した
                         //  スタックのサイズ`stk_use_counter`に、
@@ -207,19 +208,22 @@ impl AsmEmitter {
     fn is_static_var(
         &mut self,
         src: &Vec<usize>,
-        size: &ir::types::Size,
         dst: &usize,
         name: &String,
-        this_is_self: &Option<types::Size>,
+        this_is_self: &SelfPtrInfo,
     ) {
         println!("src/gen/call_func/MemoryValue");
-        let value = self.extract_operand_text(
+        let val = self.extract_operand_text(
             &src.last().unwrap(), 
             &this_is_self
         );
         let label_name = format!("M{}", self.data_idx.to_string());
         let fmt_data = self.asm_fmt
-            .get_static_num_fmt(&value, &label_name, size);
+            .get_static_num_fmt(
+                &val, 
+                &label_name, 
+                this_is_self.as_ref().unwrap()
+            );
         self.data_sec_text.push_str(&fmt_data);
         self.data_map.push((*dst, label_name));
         self.data_idx += 1;
@@ -228,7 +232,7 @@ impl AsmEmitter {
             &name,
             asm_emitter::VarIndexInfo::new(
                 &self.reg_idx, 
-                &size, 
+                this_is_self.as_ref().unwrap(), 
                 dst
             ),
         );

@@ -51,12 +51,12 @@ impl AsmEmitter {
             let resize_size = if opcode == "address" {
                 Size::DQ
             } else {
-                param_ty
+                param_ty.clone()
             };
 
             let src1_text = self.extract_operand_text(
                 &src1_idx, 
-                &Some(resize_size)
+                &resize_size.clone().wrap_dst_size()
             );
             let src1_text = self.asm_fmt
                 .resize_reg_operand(&src1_text, &resize_size);
@@ -86,33 +86,35 @@ impl AsmEmitter {
     ///     出力するアセンブリ言語のフォーマットの名前
     pub(super) fn build_func_process(
         &mut self,
-        func_meta_data: &mut (String, def_tree::FuncDefInfo),
+        fn_meta_data: &mut (String, def_tree::FuncDefInfo),
         asm_fmt_name: &Option<String>,
     ) {
-        let this_is_self = func_meta_data.1.first_param_is_self();
+        let this_is_self = fn_meta_data.1.first_param_is_self();
+        let fn_ret_ty: SelfPtrInfo = fn_meta_data.1.get_ret_ty();
+        println!("{:?}", this_is_self);
         // 新しく関数の作成、
-        self.asm_text.push_str(&format!("{}:\n", &func_meta_data.0));
+        self.asm_text.push_str(&format!("{}:\n", &fn_meta_data.0));
         // 関数ごとにスタックの使用量をリセットする
         // (前の関数の`stk_use_counter`を持ち越すと、この関数の
         //  ローカル変数のオフセットが正しく計算できない)
         self.stk_use_counter = 0;
-        if func_meta_data.1.stk_size != 0 {
+        if fn_meta_data.1.stk_size != 0 {
             // 予約されたサイズ分確保する
             self.asm_text
                 .push_str(
                     &self.asm_fmt
                         .gen_stack_frame(
-                            func_meta_data.1.stk_size
+                            fn_meta_data.1.stk_size
                         )
                     );
         } else {
-            if &func_meta_data.0 != "_start" {
+            if &fn_meta_data.0 != "_start" {
                 self.asm_text
                     .push_str(self.asm_fmt.func_frame_fmt().as_str());
             }
         }
 
-        self.curr_inst = mem::take(&mut func_meta_data.1.body);
+        self.curr_inst = mem::take(&mut fn_meta_data.1.body);
 
         for node in self.curr_inst.clone().iter() {
             match &node {
@@ -177,30 +179,39 @@ impl AsmEmitter {
                             | inst::Inst::InsertArr { .. }
                             | inst::Inst::RefStruct { .. }
                     );
-
+                    
                     if is_mem_write {
                         self.write_mem(
                             name, 
                             &dst, 
                             &value, 
-                            &this_is_self
+                            &Some(self.get_var_ty(&name))
                         );
                     } else {
                         // 通常の変数への再代入(`b = 10`など)
                         self.update_value_info(&name, &value);
 
                         let current_reg = self.reg_idx;
+                        let s: SelfPtrInfo = if this_is_self {
+                            None
+                        } else {
+                            self.get_var_ty(&name).wrap_dst_size()
+                        };
 
                         // 代入先の変数の型(サイズ)を確認し、ポインタ型
                         // であれば、専用のフォーマット(`get_ptr`)で
                         // アドレスのオペランドを組み立てる
                         let text = if self.get_var_ty(&name).is_pointer().is_some() {
-                            self.assign_val_ty_is_ptr(current_reg, value, &this_is_self)
+                            self.assign_val_ty_is_ptr(current_reg, value, &s)
                         } else {
-                            self.assign_val_is_not_ptr(current_reg, value, &this_is_self)
+                            self.assign_val_is_not_ptr(current_reg, value, &s)
                         };
 
-                        if self.expr_vars.iter().find(|v| v == &name).is_some() {
+                        if self.expr_vars
+                            .iter()
+                            .find(|v| v == &name)
+                            .is_some() 
+                        {
                             self.update_value_reg(&name, &current_reg);
                         }
                         self.asm_text.push_str(&text);
@@ -212,11 +223,15 @@ impl AsmEmitter {
                         Some(&0), 
                         &idx, 
                         None, 
-                        &this_is_self
+                        &fn_ret_ty
                     );
                     self.asm_text.push_str(&ret_asm);
                     self.asm_text
-                        .push_str(self.asm_fmt.func_frame_end().as_str());
+                        .push_str(
+                            self.asm_fmt
+                                .func_frame_end()
+                                .as_str()
+                            );
                     self.asm_text.push_str("ret\n");
                 }
                 inst::Inst::Mov {
@@ -225,11 +240,11 @@ impl AsmEmitter {
                     dst,
                     src,
                 } => {
-                    self.mov_value_ir(size, dst, src, &name, &this_is_self);
+                    self.mov_value_ir(size, dst, src, &name, &Some(size.clone()));
                 } // メモリに配置されている値の生成
                 inst::Inst::MemoryValue(mem_value) => {
                     // call_func/mem_ir.rs
-                    self.mem_value_ir(mem_value, this_is_self);
+                    self.mem_val_ir(mem_value, &this_is_self);
                 }
                 inst::Inst::Param(param) => {
                     let ty = node.get_param_ty().unwrap();

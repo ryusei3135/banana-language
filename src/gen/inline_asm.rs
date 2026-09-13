@@ -89,7 +89,7 @@ impl AsmEmitter {
     fn extract_operand_text_sized(
         &mut self,
         node_idx: &usize,
-        in_self_ptr: bool,
+        this_is_self: &Option<Size>,
         forced_size: &Size,
     ) -> String {
         match self.curr_inst[*node_idx].clone() {
@@ -123,7 +123,7 @@ impl AsmEmitter {
             _ => {
                 self.extract_operand_text(
                     node_idx, 
-                    in_self_ptr
+                    &this_is_self
                 )
             }
         }
@@ -221,7 +221,7 @@ impl AsmEmitter {
             // AT&T記法の慣例により、最後のオペランドをdstとして扱う。
             // srcのレジスタサイズは、常にこのdstのサイズに合わせる
             // (dstが変数を参照していない場合は上書きしない)
-            let dst_size = operand_ids
+            let dst_size: SelfPtrInfo = operand_ids
                 .last()
                 .and_then(
                     |id| self.resolve_operand_var_size(id)
@@ -240,11 +240,11 @@ impl AsmEmitter {
                     (true, Some(size)) => {
                         self.extract_operand_text_sized(
                             operand_id, 
-                            false, 
-                            size
+                            &dst_size,
+                            size,
                         )
                     }
-                    _ => self.extract_operand_text(operand_id, false),
+                    _ => self.extract_operand_text(operand_id, &dst_size),
                 };
                 // `{0}`, `{1}`, ... という数字のプレースホルダーを置換
                 // (`${var}`はパーサー側(preproc.rs)の時点で既に

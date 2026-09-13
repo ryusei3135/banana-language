@@ -12,7 +12,7 @@ impl AsmEmitter {
         size: &types::Size
     ) -> String {
         let insert_reg = Regex::new(r"%\{([^}]+)\}").unwrap();
-        let mut parse_err: Option<err::ErrKind> = None;
+        let parse_err: Option<err::ErrKind> = None;
         insert_reg
             .replace_all(value, |caps: &Captures| {
                 if parse_err.is_some() {
@@ -24,7 +24,11 @@ impl AsmEmitter {
                 format!(
                     "{}", 
                     self.asm_fmt
-                        .get_fmt_reg(&inner.parse::<usize>().unwrap(), size)
+                        .get_fmt_reg(
+                            &inner.parse::<usize>()
+                                .unwrap(), 
+                            size
+                        )
                 )
             })
             .to_owned()

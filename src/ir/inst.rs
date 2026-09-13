@@ -234,6 +234,7 @@ impl Inst {
             types::Size::Pointer { .. } => {
                 value.parse::<u64>().unwrap();
             }
+            types::Size::Void => panic!(),
         }
         Self::Num {
             dst,

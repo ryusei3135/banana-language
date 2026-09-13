@@ -195,7 +195,10 @@ impl AsmEmitter {
     }
 
     #[inline(always)]
-    fn gen_extern_func_asm(&mut self, extern_funcs: &Vec<inst::Inst>) {
+    fn gen_extern_func_asm(
+        &mut self, 
+        extern_funcs: &Vec<inst::Inst>
+    ) {
         for func in extern_funcs.iter() {
             if let inst::Inst::ExternFunc(name) = func {
                 self.asm_text
@@ -206,10 +209,11 @@ impl AsmEmitter {
         }
     }
 
-    pub fn get_var_ty(&self, name: &String) -> Size {
+    /// 指定された名前の変数の型を返す
+    pub fn get_var_ty(&self, var_name: &String) -> Size {
         self.var_hash_map
-            .get(name)
-            .expect(&format!("not found {}", name))
+            .get(var_name)
+            .expect(&format!("not found {}", var_name))
             .size
             .clone()
     }
@@ -255,7 +259,7 @@ impl AsmEmitter {
         dst: Option<&usize>,
         src1: &usize,
         src2: Option<&usize>,
-        this_is_self: Option<Size>,
+        this_is_self: &SelfPtrInfo,
     ) -> String {
         let base_size: Size = self.check_node_is_mem_val(src1)
             .unwrap_or(Size::DQ);

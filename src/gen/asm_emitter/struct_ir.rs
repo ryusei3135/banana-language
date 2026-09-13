@@ -68,7 +68,7 @@ impl AsmEmitter {
                 struct_txt.push_str(&fmted);
             }
         }
-        if this_is_self.is_some() {
+        if this_is_self {
             self.stk_use_counter += add_size;
         }
         return struct_txt;

@@ -176,6 +176,16 @@ impl FuncDefInfo {
             _ => false,
         })
     }
+
+    pub fn get_ret_ty(&self) -> crate::gen::SelfPtrInfo {
+        if self.ret_ty.is_none() {
+            return types::Size::Void.wrap_dst_size();
+        }
+        match self.ret_ty.as_ref().unwrap() {
+            node::TyNode::SelfTy(..) => None,
+            ty => Some(types::Size::new(ty).unwrap()),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -47,7 +47,7 @@ impl AsmEmitter {
         name: &String,
         dst: &usize,
         index: &usize,
-        this_is_self: &Option<types::Size>,
+        this_is_self: &SelfPtrInfo,
     ) -> String {
         let index_value = match &self.curr_inst[*index] {
             inst::Inst::Num { value, .. } => value
@@ -80,7 +80,6 @@ impl AsmEmitter {
         src: &str, 
         size: &usize
     ) -> String {
-        println!("{:?}", self.var_hash_map);
         let var_info = self
             .var_hash_map
             .get(&src.to_string())
@@ -172,17 +171,12 @@ impl AsmEmitter {
     /// 例: 関数の引数にそのまま渡された`{1,2,3}`)を
     /// スタック上に展開し、その先頭要素を指すオペランドを返す
     ///
-    /// `MemoryInst::Memory{ kind: Stack, src, .. }`を初期化する処理
-    /// (`gen/call_func.rs`)と同じ組み立て方をしているが、こちらは
-    /// 変数名を持たない(`var_hash_map`に登録できない)ため、
-    /// 先頭要素のオペランドをその場で返す点が異なる
-    ///
     /// ## 引数
     /// - ids: 配列の各要素の値を持つノード(`Inst::Num`など)のid
     pub(super) fn init_arr_txt<const RET_IS_ASM: bool>(
         &mut self,
         ids: &Vec<usize>,
-        this_is_self: &Option<types::Size>,
+        this_is_self: &SelfPtrInfo,
     ) -> String {
         // 代入する先が構造体などの自身のポインタの場合、引数のレジスタにする
         let assign_reg = if this_is_self.is_none() {

@@ -9,6 +9,7 @@ pub enum Size {
     Struct(Vec<Box<(String, Size)>>),
     Pointer { ty: Box<Size>, is_const: bool },
     Array { size: Box<Size>, len: usize },
+    Void,
 }
 
 impl Size {
@@ -79,7 +80,13 @@ impl Size {
                 }
                 size_counter
             }
+            Self::Void => panic!(),
         }
+    }
+
+    #[inline(always)]
+    pub fn wrap_dst_size(&self) -> crate::gen::SelfPtrInfo {
+        Some(self.clone())
     }
 
     #[inline(always)]
@@ -97,7 +104,7 @@ fn embe_ty_sort(
         "i16" => Size::DW,
         "int" => Size::DD,
         "i64" => Size::DQ,
-        ty_name => {
+        _ => {
             return Err(err::undef::UndefKind::UndefVarTy);
         }
     }

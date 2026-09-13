@@ -14,7 +14,6 @@ impl IR {
             func_ret_ty: None,
             ir_tree: Vec::new(),
             pattern_labels: 0,
-            jmp_labels: 0,
             expr_counter: 0,
             // メゾットの処理中`true`
             this_is_self: false,

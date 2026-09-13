@@ -13,3 +13,5 @@ use std::collections::HashMap;
 use std::mem;
 
 pub use asm_emitter::AsmEmitter;
+
+pub type SelfPtrInfo = Option<Size>;
