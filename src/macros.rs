@@ -22,10 +22,17 @@ macro_rules! scope_node {
         path_node.push($start.to_string());
         loop {
             // スコープのノードを作成
-            if let lex::Tkn::Name(name) = $self.next_tkn(vec!["name"])? {
+            let scope_tkn = $self.next_tkn(vec!["name"])?;
+            if let lex::Tkn::Name(name) = scope_tkn.clone() {
                 path_node.push(name);
             } else {
-                panic!();
+                return crate::syntax_err!(
+                    $self.build_err_span(),
+                    crate::err::SyntaxErrKind::ExpectedKind {
+                        expected: "name",
+                        found: scope_tkn,
+                    }
+                );
             }
 
             // スコープやメゾットでなくなったので、ノードを作成

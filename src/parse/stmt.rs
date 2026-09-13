@@ -40,7 +40,10 @@ impl Parser {
 
     // 関数の中身などを作成する
     // P は、この関数が公開されるかどうかのbool
-    fn build_func<const P: bool>(&mut self, func_name: &String) -> Result<(), err::ErrKind> {
+    fn build_func<const P: bool>(
+        &mut self, 
+        func_name: &String
+    ) -> Result<(), err::ErrKind> {
         // トップレベルの関数定義なので、`Self`が解決される
         // 構造体/列挙型は存在しない
         let node = self.func_node(&func_name, P)?;
@@ -79,7 +82,12 @@ impl Parser {
                             let node = self.enum_node()?;
                             self.gen_nodes.push(node);
                         }
-                        t => panic!("{:?}", t),
+                        t => {
+                            crate::syntax_err!(
+                                self.build_err_span(),
+                                err::SyntaxErrKind::UnexpectTknInStmt { found: t }
+                            )?;
+                        }
                     };
                 }
                 GenFlag::Group2 => {
@@ -103,7 +111,13 @@ impl Parser {
                         node::Group1Node::FuncDefine(func) => {
                             func.add(node);
                         }
-                        t => panic!("KK {:?}", t),
+                        // `Group2`のノードは常に直前に生成された関数定義に
+                        // 追加されるはずなので、ここに来るのはパーサー自体の
+                        // バグ(利用者の入力に起因するエラーではない)
+                        t => unreachable!(
+                            "one_line_nodeで生成されたノードの追加先が関数定義ではありません: {:?}",
+                            t
+                        ),
                     }
 
                     if self.current_tkn() == &lex::Tkn::RBrace {
@@ -124,13 +138,16 @@ impl Parser {
         //Ok(&self.gen_nodes)
     }
 
-    pub(super) fn one_line_node(&mut self) -> Result<node::Group2Node, err::ErrKind> {
+    pub(super) fn one_line_node(
+        &mut self
+    ) -> Result<node::Group2Node, err::ErrKind> {
         let node = match self.current_tkn().clone() {
             lex::Tkn::CompleSyn => self.comple_syntax()?,
             lex::Tkn::Name(name) => node::Group2Node::Expr(self.build_scope_node(&name)?),
             // ポインタ/配列にアクセスするノードの作成
             lex::Tkn::LBracket => {
-                if let lex::Tkn::Name(name) = self.next_tkn(vec!["name"])?.clone() {
+                let tkn = self.next_tkn(vec!["name"])?;
+                if let lex::Tkn::Name(name) = tkn.clone() {
                     match self.peek_tkn() {
                         // `name`の次が数字の場合、配列への代入
                         // `[name index] = value`
@@ -149,7 +166,13 @@ impl Parser {
                         }
                     }
                 } else {
-                    panic!();
+                    return crate::syntax_err!(
+                        self.build_err_span(),
+                        err::SyntaxErrKind::ExpectedKind {
+                            expected: "name",
+                            found: tkn,
+                        }
+                    );
                 }
             }
             lex::Tkn::KeyWordRet => node::StmtNode::Return(self.expr_add(true)?).wrap(),
@@ -163,10 +186,13 @@ impl Parser {
                 // 空のブロック(`{}`)は呼び出し元(`gen_block_node`や
                 // メゾットの本体を解析する処理など)が`one_line_node`を
                 // 呼ぶ前に判定するはずなので、ここに来るのは想定外
-                panic!("one_line_node: 空のブロックが処理されていません");
+                panic!("one_line_node: 空のブロックが処理されていません")
             }
             t => {
-                panic!("parse stmt {:?}  {:?}", t, self.peek_tkn());
+                return crate::syntax_err!(
+                    self.build_err_span(),
+                    err::SyntaxErrKind::UnexpectTknInStmt { found: t }
+                );
             }
         };
         Ok(node)
@@ -192,7 +218,9 @@ impl Parser {
     }
 
     /// 反復処理のノードを作成する関数
-    fn make_loop_node(&mut self) -> Result<node::Group2Node, err::ErrKind> {
+    fn make_loop_node(
+        &mut self
+    ) -> Result<node::Group2Node, err::ErrKind> {
         // 反復処理の条件式
         let pattern = match self.next_tkn_ref(vec!["{", ".."])? {
             // "{"の場合は条件無し
@@ -205,7 +233,13 @@ impl Parser {
         };
         // "{"をスキップ
         if self.current_tkn() != &lex::Tkn::LBrace {
-            panic!();
+            return crate::syntax_err!(
+                self.build_err_span(),
+                err::SyntaxErrKind::ExpectedKind {
+                    expected: "{",
+                    found: self.current_tkn().clone(),
+                }
+            );
         }
         self.next_tkn(vec!["{"])?;
 
@@ -217,7 +251,9 @@ impl Parser {
     }
 
     /// 同じスコープ内のノードを生成
-    pub(super) fn gen_block_node(&mut self) -> Result<Vec<node::Group2Node>, err::ErrKind> {
+    pub(super) fn gen_block_node(
+        &mut self
+    ) -> Result<Vec<node::Group2Node>, err::ErrKind> {
         let mut block = Vec::<node::Group2Node>::new();
 
         // ブロックが空(`{}`)の場合、`one_line_node`を呼ばずに
@@ -237,9 +273,18 @@ impl Parser {
         Ok(block)
     }
 
-    pub(super) fn comple_syntax(&mut self) -> Result<node::Group2Node, err::ErrKind> {
-        let lex::Tkn::Name(name) = self.next_tkn(vec![])? else {
-            panic!();
+    pub(super) fn comple_syntax(
+        &mut self
+    ) -> Result<node::Group2Node, err::ErrKind> {
+        let tkn = self.next_tkn(vec!["name"])?;
+        let lex::Tkn::Name(name) = tkn.clone() else {
+            return crate::syntax_err!(
+                self.build_err_span(),
+                err::SyntaxErrKind::ExpectedKind {
+                    expected: "name",
+                    found: tkn,
+                }
+            );
         };
         self.make_preproc(&name)
     }
@@ -255,12 +300,22 @@ impl Parser {
     /// `[name index] = value`
     /// - `[arr 0] = 10`
     ///
-    /// ## Panics
-    /// `name`の次のトークンが数字(`lex::Tkn::Number`)ではない場合panicする
-    fn make_array_assign_node(&mut self, name: &String) -> Result<node::Expr, err::ErrKind> {
-        // `index`は数字である必要がある。そうでなければpanicする
-        let lex::Tkn::Number(index) = self.next_tkn(vec!["number"])? else {
-            panic!("配列のインデックスは数字である必要があります");
+    /// ## Errors
+    /// `name`の次のトークンが数字(`lex::Tkn::Number`)ではない場合エラー
+    fn make_array_assign_node(
+        &mut self, 
+        name: &String
+    ) -> Result<node::Expr, err::ErrKind> {
+        // `index`は数字である必要がある。そうでなければエラーを返す
+        let tkn = self.next_tkn(vec!["number"])?;
+        let lex::Tkn::Number(index) = tkn.clone() else {
+            return crate::syntax_err!(
+                self.build_err_span(),
+                err::SyntaxErrKind::ExpectedKind {
+                    expected: "number",
+                    found: tkn,
+                }
+            );
         };
         self.next_tkn(vec!["]"])?;
         self.next_tkn(vec!["="])?;

@@ -18,9 +18,23 @@ impl Parser {
         let arg = match self.next_tkn(vec!["(", "<"])? {
             lex::Tkn::LParen => self.define_arg_node()?,
             lex::Tkn::LAngleBracket => {
-                panic!()
+                // ジェネリクス(`<..>`)はまだパーサーが対応していない
+                return crate::syntax_err!(
+                    self.build_err_span(),
+                    err::SyntaxErrKind::NotImplemented {
+                        feature: "ジェネリクス",
+                    }
+                );
             }
-            _ => panic!(),
+            t => {
+                return crate::syntax_err!(
+                    self.build_err_span(),
+                    err::SyntaxErrKind::ExpectedKind {
+                        expected: "( or <",
+                        found: t,
+                    }
+                );
+            }
         };
 
         match self.current_tkn() {
@@ -46,7 +60,13 @@ impl Parser {
                 node::TyNode::Ty("int".to_string()),
                 is_public,
             )),
-            t => panic!("{:?}", t),
+            t => crate::syntax_err!(
+                self.build_err_span(),
+                err::SyntaxErrKind::ExpectedKind {
+                    expected: ": or `{`",
+                    found: t.clone(),
+                }
+            ),
         }
     }
 
@@ -54,10 +74,10 @@ impl Parser {
     /// この関数では、型のあとまでトークンを進めているので、呼び出し元では
     /// current_tknでトークンを判定する
     ///
-    /// ## Panic
-    /// - 初回以外で、`,`を挟まずに次の引数の定義なら
-    /// - `,`の次に`)`が来た場合panic
-    /// - `,`の次に`,`が来たら
+    /// ## Errors
+    /// - `,`を挟まずに次の引数の定義が来た場合(名前や`)`以外のトークン)
+    /// - `,`の直前に引数が無い場合(先頭が`,`、または`,,`)
+    /// - 引数の後に`,`でも`)`でもないトークンが来た場合
     ///
     /// ## self_name
     /// メゾットの引数を解析している場合、そのメゾットが定義されている
@@ -65,7 +85,9 @@ impl Parser {
     /// 場合、`node::TyNode::SelfTy(self_name)`へ解決するために使われる
     /// (実際に`Self`が第一引数以外に使われていないかのチェックは、
     /// IRへの変換時に行う)
-    fn define_arg_node(&mut self) -> Result<Vec<node::ArgsNode>, err::ErrKind> {
+    fn define_arg_node(
+        &mut self
+    ) -> Result<Vec<node::ArgsNode>, err::ErrKind> {
         if self.current_tkn() != &lex::Tkn::LParen {
             return Err(err::ErrKind::NotFoundTkn(lex::Tkn::LParen));
         }
@@ -75,13 +97,21 @@ impl Parser {
         let mut can_create_param = true;
 
         loop {
+            // ループの先頭に来る時点では、直前の反復で`,`を消費して
+            // `can_create_param`が`true`に戻されているはず(そうでなければ
+            // 下の`,`の分岐、またはループを抜ける`)`の分岐のいずれかを
+            // 通っているはず)なので、ここが`false`になるのはパーサー
+            // 自体のバグ
             if !can_create_param {
-                panic!();
+                unreachable!("define_arg_node: 引数リストの内部状態が不正です");
             }
             match self.next_tkn(vec!["name", ")"])? {
                 lex::Tkn::Name(name) => {
+                    // 直前の`if !can_create_param`のチェックを通過して
+                    // いるため、ここでは常に`true`(同上、パーサー自体の
+                    // バグでない限り到達しない)
                     if !can_create_param {
-                        panic!();
+                        unreachable!("define_arg_node: 引数リストの内部状態が不正です");
                     }
                     self.next_tkn(vec![])?;
                     let ty = self.define_ty_node()?;
@@ -97,7 +127,13 @@ impl Parser {
                     break;
                 }
                 t => {
-                    panic!("{:?} {:?}", t, self.next_tkn_ref(vec![])?)
+                    return crate::syntax_err!(
+                        self.build_err_span(),
+                        err::SyntaxErrKind::ExpectedKind {
+                            expected: "name or `)`",
+                            found: t,
+                        }
+                    );
                 }
             }
 
@@ -110,10 +146,25 @@ impl Parser {
                     if !can_create_param {
                         can_create_param = true;
                     } else {
-                        panic!();
+                        // `,`の前に引数が無い(先頭が`,`、または`,,`)
+                        return crate::syntax_err!(
+                            self.build_err_span(),
+                            err::SyntaxErrKind::ExpectedKind {
+                                expected: "name",
+                                found: lex::Tkn::Comma,
+                            }
+                        );
                     }
                 }
-                t => panic!("{:?}", t),
+                t => {
+                    return crate::syntax_err!(
+                        self.build_err_span(),
+                        err::SyntaxErrKind::ExpectedKind {
+                            expected: ", or `)`",
+                            found: t.clone(),
+                        }
+                    );
+                }
             }
         }
 

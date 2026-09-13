@@ -8,7 +8,7 @@ impl Parser {
         name: &String
     ) -> Result<node::Expr, err::ErrKind> {
         if matches!(self.next_tkn_ref(vec!["{"])?, lex::Tkn::LBrace) {
-            self.next_tkn(vec![]).unwrap();
+            self.next_tkn(vec![])?;
             let node = self.struct_init_node::<false>(name);
             self.next_tkn(vec![])?;
             return node;
@@ -27,7 +27,10 @@ impl Parser {
     /// メゾットなどのノードを作成
     /// name.method
     #[inline(always)]
-    pub(super) fn build_member_node(&mut self, name: &String) -> Result<node::Expr, err::ErrKind> {
+    pub(super) fn build_member_node(
+        &mut self, 
+        name: &String
+    ) -> Result<node::Expr, err::ErrKind> {
         // "."がないので、何も返さない
         if !matches!(self.next_tkn_ref(vec!["not `.`"])?, lex::Tkn::Dot) {
             return Ok(self.expr_define_var(name.to_string())?);
@@ -61,15 +64,32 @@ impl Parser {
     /// 呼び出し元(`build_member_node`)で、`.`と`[`を読み飛ばした
     /// 状態で呼び出す。つまり`current_tkn()`が`[`を指している必要がある。
     ///
-    /// ## Panics
+    /// ## Errors
     /// `member`の次のトークンが名前(`lex::Tkn::Name`)、または
-    /// その次が数字(`lex::Tkn::Number`)ではない場合panicする
-    fn build_member_array_node(&mut self, name: &String) -> Result<node::Expr, err::ErrKind> {
-        let lex::Tkn::Name(member) = self.next_tkn(vec!["name"])? else {
-            panic!("配列メンバーへのアクセスには名前が必要です");
+    /// その次が数字(`lex::Tkn::Number`)ではない場合エラー
+    fn build_member_array_node(
+        &mut self, 
+        name: &String
+    ) -> Result<node::Expr, err::ErrKind> {
+        let member_tkn = self.next_tkn(vec!["name"])?;
+        let lex::Tkn::Name(member) = member_tkn.clone() else {
+            return crate::syntax_err!(
+                self.build_err_span(),
+                err::SyntaxErrKind::ExpectedKind {
+                    expected: "name",
+                    found: member_tkn,
+                }
+            );
         };
-        let lex::Tkn::Number(index) = self.next_tkn(vec!["number"])? else {
-            panic!("配列のインデックスは数字である必要があります");
+        let index_tkn = self.next_tkn(vec!["number"])?;
+        let lex::Tkn::Number(index) = index_tkn.clone() else {
+            return crate::syntax_err!(
+                self.build_err_span(),
+                err::SyntaxErrKind::ExpectedKind {
+                    expected: "number",
+                    found: index_tkn,
+                }
+            );
         };
         // "]"まで進める(current_tkn()は"]"を指す)
         self.next_tkn(vec!["]"])?;

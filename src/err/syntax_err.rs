@@ -1,4 +1,3 @@
-
 //!    - [`SyntaxErrKind`] : トークン管理・式解析全般の構文エラー
 
 //! ## エラーの組み立て方
@@ -56,6 +55,25 @@ pub enum SyntaxErrKind {
     TknIsEofInExpr,
     /// `cond`(match)式特有の構文エラー
     Cond(CondErrKinds),
+    /// 文(stmt)/トップレベルの解析中に、予期しないトークンが出現した
+    UnexpectTknInStmt { found: lex::Tkn },
+    /// ある種類のトークン(名前・数字・記号など)が期待されていた
+    /// 場所に、それとは異なるトークンが出現した(汎用)
+    ///
+    /// [`UnexpectedTkn`](Self::UnexpectedTkn)と違い、期待する
+    /// トークンが1種類の`lex::Tkn`に定まらない場合(例:
+    /// 「名前」「数字」「`,`か`)`」など)に使う
+    ExpectedKind {
+        /// 期待していたものの説明(例: `"name"`, `"number"`, `"( or <"`)
+        expected: &'static str,
+        /// 実際に出現したトークン
+        found: lex::Tkn,
+    },
+    /// 構文としては認識できるが、まだパーサーが対応していない機能
+    NotImplemented {
+        /// 未対応の機能名(例: `"ジェネリクス"`)
+        feature: &'static str,
+    },
 }
 
 impl fmt::Display for SyntaxErrKind {
@@ -96,6 +114,17 @@ impl fmt::Display for SyntaxErrKind {
             }
             Self::TknIsEofInExpr => write!(f, "式の解析中にトークン列が終了しました"),
             Self::Cond(kind) => write!(f, "{}", kind),
+            Self::UnexpectTknInStmt { found } => {
+                write!(f, "文の中で予期しないトークン`{:?}`が見つかりました", found)
+            }
+            Self::ExpectedKind { expected, found } => write!(
+                f,
+                "{}が必要ですが、`{:?}`が見つかりました",
+                expected, found
+            ),
+            Self::NotImplemented { feature } => {
+                write!(f, "`{}`はまだ実装されていません", feature)
+            }
         }
     }
 }
